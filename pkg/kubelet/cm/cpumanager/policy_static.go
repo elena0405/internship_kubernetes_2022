@@ -45,9 +45,13 @@ type SMTAlignmentError struct {
 	CpusPerCore   int
 }
 
+// EIC -> propabil o eroare de organizare a core-urilor ??
+
 func (e SMTAlignmentError) Error() string {
 	return fmt.Sprintf("SMT Alignment Error: requested %d cpus not multiple cpus per core = %d", e.RequestedCPUs, e.CpusPerCore)
 }
+
+// EIC -> probabil o eroare de aliniere ??
 
 func (e SMTAlignmentError) Type() string {
 	return ErrorSMTAlignment
@@ -93,14 +97,26 @@ func (e SMTAlignmentError) Type() string {
 // reconcile period.
 type staticPolicy struct {
 	// cpu socket topology
+	// EIC -> topologia de socket
 	topology *topology.CPUTopology
 	// set of CPUs that is not available for exclusive assignment
+	// EIC -> set de procesoare rezervate
 	reserved cpuset.CPUSet
+
+	// EIC -> set de cpu-uri izolate disponibile
+	cpuIsolatedAvailable cpuset.CPUSet
+
+	// EIC -> mapa cu cpu-uri izolate asignate pentru fiecare cpu
+	cpusIsolatedAssigned map[string]cpuset.CPUSet
+
 	// topology manager reference to get container Topology affinity
+	// EIC -> manager de topologii
 	affinity topologymanager.Store
 	// set of CPUs to reuse across allocations in a pod
+	// EIC -> set de procesoare ce pot fi refolosite
 	cpusToReuse map[string]cpuset.CPUSet
 	// options allow to fine-tune the behaviour of the policy
+	// EIC -> optiuni
 	options StaticPolicyOptions
 }
 
@@ -118,15 +134,26 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 
 	klog.InfoS("Static policy created with configuration", "options", opts)
 
+	availableIsolatedCpus := cpuset.NewBuilder()
+	availableIsolatedCpus.Add(3)
+	availableIsolatedCpus.Add(4)
+	availableIsolatedCpus.Add(5)
+
+	// EIC -> Q: vad ca aici, la policy, nu ii da acel set de procesoare reverzate...oare se inlocuieste cu nil?
+	//        A: gata, am vazut acum, aloca mai jos
 	policy := &staticPolicy{
-		topology:    topology,
-		affinity:    affinity,
-		cpusToReuse: make(map[string]cpuset.CPUSet),
-		options:     opts,
+		topology:             topology,
+		cpuIsolatedAvailable: availableIsolatedCpus.Result(),
+		affinity:             affinity,
+		cpusIsolatedAssigned: make(map[string]cpuset.CPUSet),
+		cpusToReuse:          make(map[string]cpuset.CPUSet),
+		options:              opts,
 	}
 
 	allCPUs := topology.CPUDetails.CPUs()
+	// EIC -> aici declar o variabila numita reserved de tip cpuset.CPUSet
 	var reserved cpuset.CPUSet
+	// EIC -> daca a, deja un set de procesoare rezervate date ca parametru, ii atribui valoarea variabilei reserved
 	if reservedCPUs.Size() > 0 {
 		reserved = reservedCPUs
 	} else {
@@ -135,6 +162,9 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 		//
 		// For example: Given a system with 8 CPUs available and HT enabled,
 		// if numReservedCPUs=2, then reserved={0,4}
+
+		// EIC -> in caz contrar, iau un numar de procesoare egal cu numarul dat ca parametru, dupa o anumita topologie;
+		//        cred ca se aleg cele cu ID-ul mai mic
 		reserved, _ = policy.takeByTopology(allCPUs, numReservedCPUs)
 	}
 
@@ -149,10 +179,13 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 	return policy, nil
 }
 
+// EIC -> intoarce numele unei politici
+
 func (p *staticPolicy) Name() string {
 	return string(PolicyStatic)
 }
 
+// EIC -> policy.Start(state)
 func (p *staticPolicy) Start(s state.State) error {
 	if err := p.validateState(s); err != nil {
 		klog.ErrorS(err, "Static policy invalid state, please drain node and remove policy state file")
@@ -166,6 +199,9 @@ func (p *staticPolicy) validateState(s state.State) error {
 	tmpDefaultCPUset := s.GetDefaultCPUSet()
 
 	// Default cpuset cannot be empty when assignments exist
+
+	// EIC Daca cpuset-ul este gol cand avem assignment-uri, se intoarce un cod de eroare
+
 	if tmpDefaultCPUset.IsEmpty() {
 		if len(tmpAssignments) != 0 {
 			return fmt.Errorf("default cpuset cannot be empty")
@@ -180,6 +216,9 @@ func (p *staticPolicy) validateState(s state.State) error {
 	// 1. Check if the reserved cpuset is not part of default cpuset because:
 	// - kube/system reserved have changed (increased) - may lead to some containers not being able to start
 	// - user tampered with file
+
+	// EIC daca procesoarele rezervate nu sunt printre cpuset-ul default, se intoarce un cod de eroare
+
 	if !p.reserved.Intersection(tmpDefaultCPUset).Equals(p.reserved) {
 		return fmt.Errorf("not all reserved cpus: \"%s\" are present in defaultCpuSet: \"%s\"",
 			p.reserved.String(), tmpDefaultCPUset.String())
@@ -268,28 +307,84 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 				CpusPerCore:   p.topology.CPUsPerCore(),
 			}
 		}
-		if cpuset, ok := s.GetCPUSet(string(pod.UID), container.Name); ok {
-			p.updateCPUsToReuse(pod, container, cpuset)
+		if setOfCpus, ok := s.GetCPUSet(string(pod.UID), container.Name); ok {
+			p.updateCPUsToReuse(pod, container, setOfCpus)
 			klog.InfoS("Static policy: container already present in state, skipping", "pod", klog.KObj(pod), "containerName", container.Name)
 			return nil
 		}
 
 		// Call Topology Manager to get the aligned socket affinity across all hint providers.
 		hint := p.affinity.GetAffinity(string(pod.UID), container.Name)
+		klog.InfoS("Am identificat podul cu numele chosenone")
 		klog.InfoS("Topology Affinity", "pod", klog.KObj(pod), "containerName", container.Name, "affinity", hint)
 
 		// Allocate CPUs according to the NUMA affinity contained in the hint.
-		cpuset, err := p.allocateCPUs(s, numCPUs, hint.NUMANodeAffinity, p.cpusToReuse[string(pod.UID)])
+		setOfCpus, err := p.allocateCPUs(s, numCPUs, hint.NUMANodeAffinity, p.cpusToReuse[string(pod.UID)])
 		if err != nil {
 			klog.ErrorS(err, "Unable to allocate CPUs", "pod", klog.KObj(pod), "containerName", container.Name, "numCPUs", numCPUs)
 			return err
 		}
-		s.SetCPUSet(string(pod.UID), container.Name, cpuset)
-		p.updateCPUsToReuse(pod, container, cpuset)
+
+		if pod.ObjectMeta.Name == "cpu-demo" {
+			cpuToRemove := cpuset.NewBuilder()
+			cpuToRemove.Add(4)
+			klog.InfoS("EIC: setul de procesoare aferent podului cu numele  chosenone este: ", cpuToRemove)
+			setOfCpus.Difference(cpuToRemove.Result())
+		}
+
+		// EIC -> if the number of cpus which should be asigned for pod is 2, the target is to assign an isolated cpu;
+		//        to do that, we should check if the list of available cpus if not empty; if it is not empty, then
+		//        we will extract the first element from the list of available cpus and add it to the map of
+		//        assigned cpus for the pod
+		if numCPUs == 2 {
+			check := p.cpuIsolatedAvailable.Size() >= 1
+			if check {
+				klog.InfoS("EIC: I have a pod with 2 CPUs to assign and I will assign it an isolated cpu!")
+
+				firstElement := cpuset.NewBuilder()
+				sliceOfCpus := p.cpuIsolatedAvailable.ToSlice()
+				firstElement.Add(sliceOfCpus[0])
+
+				p.cpuIsolatedAvailable.Difference(firstElement.Result())
+				p.cpusIsolatedAssigned[string(pod.UID)].Union(firstElement.Result())
+				setOfCpus.Union(firstElement.Result())
+			} else {
+				error := fmt.Errorf("having a pod with 2 CPUs to assign, but not enough isolated cpus to assign...failed")
+				klog.InfoS("EIC: I have a pod with 2 CPUs to assign, but not enough isolated cpus to assign...FAILED!")
+
+				return error
+			}
+		} else if numCPUs == 3 {
+			if p.cpuIsolatedAvailable.Size() >= 2 {
+				klog.InfoS("EIC: I have a pod with 3 CPUs to assign and I will assign it 2 isolated cpus!")
+
+				firstTwoElements := cpuset.NewBuilder()
+				sliceOfCpus := p.cpuIsolatedAvailable.ToSlice()
+				firstTwoElements.Add(sliceOfCpus[0])
+				firstTwoElements.Add(sliceOfCpus[1])
+
+				p.cpuIsolatedAvailable.Difference(firstTwoElements.Result())
+				p.cpusIsolatedAssigned[string(pod.UID)].Union(firstTwoElements.Result())
+
+				setOfCpus.Union(firstTwoElements.Result())
+			} else {
+				error := fmt.Errorf("having a pod with 3 CPUs to assign, but not enough isolated cpus to assign...failed")
+				klog.InfoS("EIC: I have a pod with 3 CPUs to assign, but not enough isolated cpus to assign...FAILED!")
+
+				return error
+			}
+		}
+
+		s.SetCPUSet(string(pod.UID), container.Name, setOfCpus)
+		p.updateCPUsToReuse(pod, container, setOfCpus)
 
 	}
 	// container belongs in the shared pool (nothing to do; use default cpuset)
 	return nil
+}
+
+func NewCPUSet(i int) {
+	panic("unimplemented")
 }
 
 // getAssignedCPUsOfSiblings returns assigned cpus of given container's siblings(all containers other than the given container) in the given pod `podUID`.
@@ -308,12 +403,31 @@ func getAssignedCPUsOfSiblings(s state.State, podUID string, containerName strin
 func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
 	klog.InfoS("Static policy: RemoveContainer", "podUID", podUID, "containerName", containerName)
 	cpusInUse := getAssignedCPUsOfSiblings(s, podUID, containerName)
+	var toInvestigate cpuset.CPUSet
 	if toRelease, ok := s.GetCPUSet(podUID, containerName); ok {
 		s.Delete(podUID, containerName)
 		// Mutate the shared pool, adding released cpus.
+		toInvestigate = toRelease.Clone()
 		toRelease = toRelease.Difference(cpusInUse)
 		s.SetDefaultCPUSet(s.GetDefaultCPUSet().Union(toRelease))
 	}
+
+	// EIC -> after deleting a container, we check if each cpu from list cpusInUse
+	//        is in the list of isolated assigned cpus for it's pod; if it does,
+	//        then we will remove the element from the list of assigned cpus and
+	//        add the cpu in the list of available isolated cpus for the pod
+	for cpu := range toInvestigate.ToSlice() {
+		klog.InfoS("EIC: Checking if there is a cpu in the list of isolated assigned cpus for pod ", podUID)
+		if p.cpusIsolatedAssigned[podUID].Contains(cpu) {
+			klog.InfoS("EIC: I have found a cpu in the list of assigned cpus for the pod ", podUID)
+			cpuElement := cpuset.NewBuilder()
+			cpuElement.Add(cpu)
+
+			p.cpusIsolatedAssigned[podUID].Difference(cpuElement.Result())
+			p.cpuIsolatedAvailable.Union(cpuElement.Result())
+		}
+	}
+
 	return nil
 }
 
