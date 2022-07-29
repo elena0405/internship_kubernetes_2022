@@ -65,27 +65,26 @@ func GetIsolCPUs(str1 string) []int {
 		str1 = str1[0 : len(str1)-1]
 	}
 
-	// strings that contains "="
-	res1 := strings.SplitAfter(str1, "=")
-	isolStr := res1[len(res1)-1]
+	// split between "isolcpus=" and " "
+	res1 := strings.SplitAfter(str1, "isolcpus=")
+	str2 := res1[len(res1)-1]
+	res2 := strings.Split(str2, " ")
 
-	// strings that contains ","
-	res2 := strings.SplitAfter(isolStr, ",")
+	// substrings that contains ","
+	res3 := strings.SplitAfter(res2[0], ",")
 
 	var isolCores []int
 
-	for index, element := range res2 {
-		if index != len(res2)-1 {
+	for index, element := range res3 {
+		if index != len(res3)-1 {
 			element = element[0 : len(element)-1]
 		}
 
 		// is not a range
 		if !strings.Contains(element, "-") {
-
-			// fmt.Println(element, "at index ", index, " a single")
 			y, e := strconv.Atoi(element)
 			if e != nil {
-				fmt.Println("Something went wrong1")
+				return []int{}
 			}
 
 			isolCores = append(isolCores, y)
@@ -95,7 +94,6 @@ func GetIsolCPUs(str1 string) []int {
 			coreStart, e := strconv.Atoi(strings.Split(element, "-")[0])
 
 			if e != nil {
-				fmt.Println("Something went wrong2")
 				return []int{}
 			}
 
@@ -111,12 +109,12 @@ func GetIsolCPUs(str1 string) []int {
 		}
 	}
 
+	fmt.Println("MNFC: isolCPUs: ", isolCores)
+
 	return isolCores
 }
 
-func GetCPUsInfo(numCores int) info.CPUsInfo {
-
-	path := "/proc/cmdline"
+func readFile(path string) string {
 
 	content, err := ioutil.ReadFile(path)
 
@@ -124,9 +122,13 @@ func GetCPUsInfo(numCores int) info.CPUsInfo {
 		log.Fatal(err)
 	}
 
-	str1 := string(content)
+	return string(content)
 
-	isolCPUs := GetIsolCPUs(str1)
+}
+
+func GetCPUsInfo(numCores int) info.CPUsInfo {
+
+	isolCPUs := GetIsolCPUs(readFile("/proc/cmdline"))
 
 	cset_builder := cpuset.NewBuilder()
 	for _, core := range isolCPUs {

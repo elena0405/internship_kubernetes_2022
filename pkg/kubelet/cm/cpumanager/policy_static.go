@@ -19,6 +19,7 @@ package cpumanager
 import (
 	"fmt"
 
+	"github.com/google/cadvisor/machine"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
@@ -329,6 +330,7 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			cpuToRemove := cpuset.NewBuilder()
 			cpuToRemove.Add(4)
 			klog.InfoS("EIC: setul de procesoare aferent podului cu numele  chosenone este: ", cpuToRemove)
+			klog.InfoS("MNFC: i would like to anonce that my isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(8).ExlusiveCPUs)
 			setOfCpus.Difference(cpuToRemove.Result())
 		}
 
@@ -692,4 +694,3 @@ func (p *staticPolicy) generateCPUTopologyHints(availableCPUs cpuset.CPUSet, reu
 
 	return hints
 }
-
