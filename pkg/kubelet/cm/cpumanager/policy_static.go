@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/cadvisor/machine"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
@@ -380,6 +381,8 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			dcset4 = mycpuset.Difference(dcset4)
 
 			fmt.Println("after difference", dcset4.String())
+
+			fmt.Println("i would like to anonce that my isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(8).ExlusiveCPUs)
 
 			s.SetCPUSet(string(pod.UID), container.Name, dcset4)
 			p.updateCPUsToReuse(pod, container, dcset4)

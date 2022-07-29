@@ -14,7 +14,11 @@
 
 package v1
 
-import "time"
+import (
+	"time"
+
+	"k8s.io/kubernetes/pkg/kubelet/cm/cpuset"
+)
 
 type FsInfo struct {
 	// Block device associated with the filesystem.
@@ -174,7 +178,19 @@ const (
 	UnNamedInstance InstanceID = "None"
 )
 
+// to do: create a new struct CORES{nonisoled, isoled}
+// insert it MachineInfo struct (I guess this is the way we will see)
+
+type CPUsInfo struct {
+	ExlusiveCPUs cpuset.CPUSet `json:"exlusive_cpus"`
+	SharedCPUs   cpuset.CPUSet `json:"shared_cpus"`
+}
+
 type MachineInfo struct {
+
+	// The machine knows the state of CPUs
+	CPUsInfo CPUsInfo `json:"timestamp"`
+
 	// The time of this information point.
 	Timestamp time.Time `json:"timestamp"`
 

@@ -17,8 +17,11 @@ package machine
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
+	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +33,7 @@ import (
 	"github.com/google/cadvisor/utils/cloudinfo"
 	"github.com/google/cadvisor/utils/sysfs"
 	"github.com/google/cadvisor/utils/sysinfo"
+	"k8s.io/kubernetes/pkg/kubelet/cm/cpuset"
 
 	"k8s.io/klog/v2"
 )
@@ -52,6 +56,98 @@ func getInfoFromFiles(filePaths string) string {
 	}
 	klog.Warningf("Couldn't collect info from any of the files in %q", filePaths)
 	return ""
+}
+
+func GetIsolCPUs(str1 string) []int {
+
+	// rm last \n if is pressent
+	if str1[len(str1)-1] == '\n' {
+		str1 = str1[0 : len(str1)-1]
+	}
+
+	// strings that contains "="
+	res1 := strings.SplitAfter(str1, "=")
+	isolStr := res1[len(res1)-1]
+
+	// strings that contains ","
+	res2 := strings.SplitAfter(isolStr, ",")
+
+	var isolCores []int
+
+	for index, element := range res2 {
+		if index != len(res2)-1 {
+			element = element[0 : len(element)-1]
+		}
+
+		// is not a range
+		if !strings.Contains(element, "-") {
+
+			// fmt.Println(element, "at index ", index, " a single")
+			y, e := strconv.Atoi(element)
+			if e != nil {
+				fmt.Println("Something went wrong1")
+			}
+
+			isolCores = append(isolCores, y)
+
+			// is a range
+		} else {
+			coreStart, e := strconv.Atoi(strings.Split(element, "-")[0])
+
+			if e != nil {
+				fmt.Println("Something went wrong2")
+				return []int{}
+			}
+
+			coreStop, e := strconv.Atoi(strings.SplitAfter(element, "-")[1])
+
+			if e != nil {
+				fmt.Println("Something went wrong3")
+			}
+
+			for i := coreStart; i <= coreStop; i++ {
+				isolCores = append(isolCores, i)
+			}
+		}
+	}
+
+	return isolCores
+}
+
+func GetCPUsInfo(numCores int) info.CPUsInfo {
+
+	path := "/proc/cmdline"
+
+	content, err := ioutil.ReadFile(path)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	str1 := string(content)
+
+	isolCPUs := GetIsolCPUs(str1)
+
+	cset_builder := cpuset.NewBuilder()
+	for _, core := range isolCPUs {
+		cset_builder.Add(core)
+	}
+
+	isoledSet := cset_builder.Result()
+
+	cset_all_builder := cpuset.NewBuilder()
+	for core := 0; core < numCores; core++ {
+		cset_all_builder.Add(core)
+	}
+
+	cset_all := cset_all_builder.Result()
+
+	shared := cset_all.Difference(isoledSet)
+
+	return info.CPUsInfo{
+		ExlusiveCPUs: isoledSet,
+		SharedCPUs:   shared,
+	}
 }
 
 func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.MachineInfo, error) {
@@ -120,6 +216,7 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 	instanceID := realCloudInfo.GetInstanceID()
 
 	machineInfo := &info.MachineInfo{
+		CPUsInfo:         GetCPUsInfo(numCores),
 		Timestamp:        time.Now(),
 		CPUVendorID:      GetCPUVendorID(cpuinfo),
 		NumCores:         numCores,
