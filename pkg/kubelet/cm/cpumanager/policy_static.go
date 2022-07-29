@@ -18,6 +18,10 @@ package cpumanager
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
+	"strconv"
+	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
@@ -248,6 +252,62 @@ func (p *staticPolicy) updateCPUsToReuse(pod *v1.Pod, container *v1.Container, c
 	p.cpusToReuse[string(pod.UID)] = p.cpusToReuse[string(pod.UID)].Difference(cset)
 }
 
+func GetIsolCPUs(str1 string) []int {
+
+	// rm last \n if is pressent
+	if str1[len(str1)-1] == '\n' {
+		str1 = str1[0 : len(str1)-1]
+	}
+
+	// strings that contains "="
+	res1 := strings.SplitAfter(str1, "=")
+	isolStr := res1[len(res1)-1]
+
+	// strings that contains ","
+	res2 := strings.SplitAfter(isolStr, ",")
+
+	var isolCores []int
+
+	for index, element := range res2 {
+		if index != len(res2)-1 {
+			element = element[0 : len(element)-1]
+		}
+
+		// is not a range
+		if !strings.Contains(element, "-") {
+
+			// fmt.Println(element, "at index ", index, " a single")
+			y, e := strconv.Atoi(element)
+			if e != nil {
+				fmt.Println("Something went wrong1")
+			}
+
+			isolCores = append(isolCores, y)
+
+			// is a range
+		} else {
+			coreStart, e := strconv.Atoi(strings.Split(element, "-")[0])
+
+			if e != nil {
+				fmt.Println("Something went wrong2")
+				return []int{}
+			}
+
+			coreStop, e := strconv.Atoi(strings.SplitAfter(element, "-")[1])
+
+			if e != nil {
+				fmt.Println("Something went wrong3")
+			}
+
+			for i := coreStart; i <= coreStop; i++ {
+				isolCores = append(isolCores, i)
+			}
+		}
+	}
+
+	return isolCores
+}
+
 func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
 	if numCPUs := p.guaranteedCPUs(pod, container); numCPUs != 0 {
 		klog.InfoS("Static policy: Allocate", "pod", klog.KObj(pod), "containerName", container.Name)
@@ -268,27 +328,70 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 				CpusPerCore:   p.topology.CPUsPerCore(),
 			}
 		}
-		if cpuset, ok := s.GetCPUSet(string(pod.UID), container.Name); ok {
-			p.updateCPUsToReuse(pod, container, cpuset)
+		if mycpuset, ok := s.GetCPUSet(string(pod.UID), container.Name); ok {
+			p.updateCPUsToReuse(pod, container, mycpuset)
 			klog.InfoS("Static policy: container already present in state, skipping", "pod", klog.KObj(pod), "containerName", container.Name)
 			return nil
 		}
+
+		// fac modificarile , compilez cu debugg flag, sterg /var/lib/kubelet/cpu.. ,   obtin binarul il inlocuiesc cu cel nou compilat.
 
 		// Call Topology Manager to get the aligned socket affinity across all hint providers.
 		hint := p.affinity.GetAffinity(string(pod.UID), container.Name)
 		klog.InfoS("Topology Affinity", "pod", klog.KObj(pod), "containerName", container.Name, "affinity", hint)
 
 		// Allocate CPUs according to the NUMA affinity contained in the hint.
-		cpuset, err := p.allocateCPUs(s, numCPUs, hint.NUMANodeAffinity, p.cpusToReuse[string(pod.UID)])
+		mycpuset, err := p.allocateCPUs(s, numCPUs, hint.NUMANodeAffinity, p.cpusToReuse[string(pod.UID)])
 		if err != nil {
 			klog.ErrorS(err, "Unable to allocate CPUs", "pod", klog.KObj(pod), "containerName", container.Name, "numCPUs", numCPUs)
 			return err
 		}
-		s.SetCPUSet(string(pod.UID), container.Name, cpuset)
-		p.updateCPUsToReuse(pod, container, cpuset)
 
+		if pod.ObjectMeta.Name == "cpu-demo" {
+			klog.InfoS("Am gasit podul", pod.ObjectMeta.Name)
+
+			path := "/proc/cmdline"
+
+			content, err := ioutil.ReadFile(path)
+
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			str1 := string(content)
+
+			isolCPUs := GetIsolCPUs(str1)
+
+			fmt.Println("isol cores from my func: ", isolCPUs)
+
+			fmt.Println("before difference", mycpuset.String())
+
+			cset4 := cpuset.NewBuilder()
+			var dcset4 cpuset.CPUSet
+			for _, core := range isolCPUs {
+				fmt.Println("adding core: ", core)
+				cset4.Add(core)
+			}
+
+			dcset4 = cset4.Result()
+
+			fmt.Println("making difference", mycpuset.String(), "and* ", dcset4.String())
+
+			dcset4 = mycpuset.Difference(dcset4)
+
+			fmt.Println("after difference", dcset4.String())
+
+			s.SetCPUSet(string(pod.UID), container.Name, dcset4)
+			p.updateCPUsToReuse(pod, container, dcset4)
+
+		} else {
+			klog.InfoS("Am gasit un alt pod cu numele", pod.ObjectMeta.Name)
+
+			s.SetCPUSet(string(pod.UID), container.Name, mycpuset)
+			p.updateCPUsToReuse(pod, container, mycpuset)
+		}
 	}
-	// container belongs in the shared pool (nothing to do; use default cpuset)
+	// container belongs in the shared pool (nothing to do; use default mycpuset)
 	return nil
 }
 
@@ -306,6 +409,7 @@ func getAssignedCPUsOfSiblings(s state.State, podUID string, containerName strin
 }
 
 func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
+	klog.InfoS("Salut din log!")
 	klog.InfoS("Static policy: RemoveContainer", "podUID", podUID, "containerName", containerName)
 	cpusInUse := getAssignedCPUsOfSiblings(s, podUID, containerName)
 	if toRelease, ok := s.GetCPUSet(podUID, containerName); ok {
