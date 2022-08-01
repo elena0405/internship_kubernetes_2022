@@ -109,8 +109,6 @@ func GetIsolCPUs(str1 string) []int {
 		}
 	}
 
-	fmt.Println("MNFC: isolCPUs: ", isolCores)
-
 	return isolCores
 }
 

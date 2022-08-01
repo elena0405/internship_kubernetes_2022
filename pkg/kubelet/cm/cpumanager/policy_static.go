@@ -327,10 +327,10 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 		}
 
 		if pod.ObjectMeta.Name == "cpu-demo" {
+			klog.InfoS("MNFC: isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(8).ExlusiveCPUs.String())
 			cpuToRemove := cpuset.NewBuilder()
 			cpuToRemove.Add(4)
 			klog.InfoS("EIC: setul de procesoare aferent podului cu numele  chosenone este: ", cpuToRemove)
-			klog.InfoS("MNFC: i would like to anonce that my isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(8).ExlusiveCPUs)
 			setOfCpus.Difference(cpuToRemove.Result())
 		}
 
