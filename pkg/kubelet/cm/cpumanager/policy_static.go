@@ -19,7 +19,9 @@ package cpumanager
 import (
 	"fmt"
 
+	"github.com/google/cadvisor/fs"
 	"github.com/google/cadvisor/machine"
+	"github.com/google/cadvisor/utils/sysfs"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
@@ -327,7 +329,28 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 		}
 
 		if pod.ObjectMeta.Name == "cpu-demo" {
-			klog.InfoS("MNFC: isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(8).ExlusiveCPUs.String())
+
+			// POC:
+			// One way to get SOME info from machine
+			fmt.Println("MNFC prntln: all cpus are: ", p.topology.NumCores)
+
+			// Better way to get more info
+			info, err := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
+			if err != nil {
+				klog.InfoS("MNFC: error at Info func")
+			}
+			fmt.Println("MNFC: numCores from info", info.NumCores)
+
+			// this is a method that calls a func to get info
+			klog.InfoS("MNFC:(call func) isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(p.topology.NumCores).ExlusiveCPUs.String())
+			klog.InfoS("MNFC:(call func) non-isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(p.topology.NumCores).SharedCPUs.String())
+
+			// I think this is the best way to interogate the machine info
+			klog.InfoS("MNFC: isoled CPUs from machineInfo are: ", info.CPUsInfo.ExlusiveCPUs.String())
+			klog.InfoS("MNFC: non-isoled CPUs from machineInfo are: ", info.CPUsInfo.SharedCPUs.String())
+
+			// end of POC
+
 			cpuToRemove := cpuset.NewBuilder()
 			cpuToRemove.Add(4)
 			klog.InfoS("EIC: setul de procesoare aferent podului cu numele  chosenone este: ", cpuToRemove)
