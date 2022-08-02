@@ -150,7 +150,7 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 		affinity:             affinity,
 		cpusIsolatedAssigned: make(map[string]cpuset.CPUSet),
 		cpusToReuse:          make(map[string]cpuset.CPUSet),
-		options:              opts,
+		options:              opts,s
 	}
 
 	allCPUs := topology.CPUDetails.CPUs()
@@ -335,6 +335,7 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			fmt.Println("MNFC prntln: all cpus are: ", p.topology.NumCores)
 
 			// Better way to get more info
+			// inHostNamespace(bool) ? what it is
 			info, err := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
 			if err != nil {
 				klog.InfoS("MNFC: error at Info func")
