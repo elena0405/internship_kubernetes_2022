@@ -101,6 +101,8 @@ func (l fastLookup) interpret(s suffix) (base, exponent int32, format Format, ok
 		return 10, 6, DecimalSI, true
 	case "G":
 		return 10, 9, DecimalSI, true
+	case "x":
+		return 10, -3, DecimalSI, true
 	}
 	return l.suffixHandler.interpret(s)
 }
