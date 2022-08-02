@@ -150,7 +150,7 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 		affinity:             affinity,
 		cpusIsolatedAssigned: make(map[string]cpuset.CPUSet),
 		cpusToReuse:          make(map[string]cpuset.CPUSet),
-		options:              opts,s
+		options:              opts,
 	}
 
 	allCPUs := topology.CPUDetails.CPUs()
