@@ -21,6 +21,19 @@ import (
 )
 
 var (
+	topoIsolatedSingleSocketHT = &topology.CPUTopology{
+		NumCPUs:    8,
+		NumSockets: 1,
+		NumCores:   4,
+		CPUDetails: map[int]topology.CPUInfo{
+			0: {CoreID: 0, SocketID: 0, NUMANodeID: 0},
+			1: {CoreID: 1, SocketID: 0, NUMANodeID: 0},
+			2: {CoreID: 2, SocketID: 0, NUMANodeID: 0},
+			6: {CoreID: 2, SocketID: 0, NUMANodeID: 0},
+			7: {CoreID: 3, SocketID: 0, NUMANodeID: 0},
+		},
+	}
+
 	topoSingleSocketHT = &topology.CPUTopology{
 		NumCPUs:    8,
 		NumSockets: 1,

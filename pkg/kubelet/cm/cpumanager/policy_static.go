@@ -137,21 +137,27 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 
 	klog.InfoS("Static policy created with configuration", "options", opts)
 
-	availableIsolatedCpus := cpuset.NewBuilder()
-	availableIsolatedCpus.Add(3)
-	availableIsolatedCpus.Add(4)
-	availableIsolatedCpus.Add(5)
+	info, _ := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
+
+	//availableIsolatedCpus := cpuset.NewBuilder()
+
+	//availableIsolatedCpus.Add(3)
+	//availableIsolatedCpus.Add(4)
+	//availableIsolatedCpus.Add(5)
 
 	// EIC -> Q: vad ca aici, la policy, nu ii da acel set de procesoare reverzate...oare se inlocuieste cu nil?
 	//        A: gata, am vazut acum, aloca mai jos
 	policy := &staticPolicy{
-		topology:             topology,
-		cpuIsolatedAvailable: availableIsolatedCpus.Result(),
+		topology: topology,
+		//cpuIsolatedAvailable: availableIsolatedCpus.Result(),
+		cpuIsolatedAvailable: info.CPUsInfo.ExlusiveCPUs.Clone(),
 		affinity:             affinity,
 		cpusIsolatedAssigned: make(map[string]cpuset.CPUSet),
 		cpusToReuse:          make(map[string]cpuset.CPUSet),
 		options:              opts,
 	}
+
+	klog.InfoS("EIC to MNFC: cpusIsolatedAvailable: ", fmt.Sprint(policy.cpuIsolatedAvailable))
 
 	allCPUs := topology.CPUDetails.CPUs()
 	// EIC -> aici declar o variabila numita reserved de tip cpuset.CPUSet
@@ -357,6 +363,8 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			setOfCpus.Difference(cpuToRemove.Result())
 		}
 
+		klog.InfoS("EIC: pod UID: ", string(pod.GetUID()))
+
 		// EIC -> if the number of cpus which should be asigned for pod is 2, the target is to assign an isolated cpu;
 		//        to do that, we should check if the list of available cpus if not empty; if it is not empty, then
 		//        we will extract the first element from the list of available cpus and add it to the map of
@@ -364,40 +372,80 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 		if numCPUs == 2 {
 			check := p.cpuIsolatedAvailable.Size() >= 1
 			if check {
-				klog.InfoS("EIC: I have a pod with 2 CPUs to assign and I will assign it an isolated cpu!")
+				klog.InfoS("EIC: I have a pod with 2 CPUs to assign and I will assign it an isolated cpu!*")
 
-				firstElement := cpuset.NewBuilder()
-				sliceOfCpus := p.cpuIsolatedAvailable.ToSlice()
-				firstElement.Add(sliceOfCpus[0])
+				firstElementIsolated := cpuset.NewBuilder()
+				sliceOfIsolatedCpus := p.cpuIsolatedAvailable.ToSlice()
+				firstElementIsolated.Add(sliceOfIsolatedCpus[0])
 
-				p.cpuIsolatedAvailable.Difference(firstElement.Result())
-				p.cpusIsolatedAssigned[string(pod.UID)].Union(firstElement.Result())
-				setOfCpus.Union(firstElement.Result())
+				p.cpuIsolatedAvailable = p.cpuIsolatedAvailable.Difference(firstElementIsolated.Result())
+
+				// EIC -> checking if there are isolated cpus assigned for this pod
+				if _, ok := p.cpusIsolatedAssigned[string(pod.UID)]; !ok {
+					p.cpusIsolatedAssigned[string(pod.UID)] = cpuset.NewCPUSet()
+				}
+
+				p.cpusIsolatedAssigned[string(pod.UID)] = p.cpusIsolatedAssigned[string(pod.UID)].Union(firstElementIsolated.Result())
+
+				firstElementSet := cpuset.NewBuilder()
+				sliceOfCpus := setOfCpus.ToSlice()
+				firstElementSet.Add(sliceOfCpus[0])
+
+				setOfCpus = setOfCpus.Difference(firstElementSet.Result())
+				setOfCpus = setOfCpus.Union(firstElementIsolated.Result())
+
+				cpusForPod := getAssignedCPUsOfSiblings(s, string(pod.GetUID()), container.Name)
+				cpusForPod = cpusForPod.Union(setOfCpus)
+
+				s.SetDefaultCPUSet(s.GetDefaultCPUSet().Difference(cpusForPod))
+
 			} else {
 				error := fmt.Errorf("having a pod with 2 CPUs to assign, but not enough isolated cpus to assign...failed")
 				klog.InfoS("EIC: I have a pod with 2 CPUs to assign, but not enough isolated cpus to assign...FAILED!")
 
 				return error
 			}
+
+			klog.InfoS("EIC: The number of assigned cpus for the pod is ", fmt.Sprint(setOfCpus.Size()))
+			klog.InfoS("EIC: The cpus assigned for the pod are: ", fmt.Sprint(setOfCpus))
 		} else if numCPUs == 3 {
 			if p.cpuIsolatedAvailable.Size() >= 2 {
 				klog.InfoS("EIC: I have a pod with 3 CPUs to assign and I will assign it 2 isolated cpus!")
 
+				firstTwoIsolatedElements := cpuset.NewBuilder()
+				sliceOfIsolatedCpus := p.cpuIsolatedAvailable.ToSlice()
+				firstTwoIsolatedElements.Add(sliceOfIsolatedCpus[0])
+				firstTwoIsolatedElements.Add(sliceOfIsolatedCpus[1])
+
+				p.cpuIsolatedAvailable = p.cpuIsolatedAvailable.Difference(firstTwoIsolatedElements.Result())
+
+				if _, ok := p.cpusIsolatedAssigned[string(pod.UID)]; !ok {
+					p.cpusIsolatedAssigned[string(pod.UID)] = cpuset.NewCPUSet()
+				}
+
+				p.cpusIsolatedAssigned[string(pod.UID)] = p.cpusIsolatedAssigned[string(pod.UID)].Union(firstTwoIsolatedElements.Result())
+
 				firstTwoElements := cpuset.NewBuilder()
-				sliceOfCpus := p.cpuIsolatedAvailable.ToSlice()
+				sliceOfCpus := setOfCpus.ToSlice()
 				firstTwoElements.Add(sliceOfCpus[0])
 				firstTwoElements.Add(sliceOfCpus[1])
 
-				p.cpuIsolatedAvailable.Difference(firstTwoElements.Result())
-				p.cpusIsolatedAssigned[string(pod.UID)].Union(firstTwoElements.Result())
+				setOfCpus = setOfCpus.Difference(firstTwoElements.Result())
+				setOfCpus = setOfCpus.Union(firstTwoIsolatedElements.Result())
 
-				setOfCpus.Union(firstTwoElements.Result())
+				cpusForPod := getAssignedCPUsOfSiblings(s, string(pod.GetUID()), container.Name)
+				cpusForPod = cpusForPod.Union(setOfCpus)
+
+				s.GetDefaultCPUSet().Difference(cpusForPod)
 			} else {
 				error := fmt.Errorf("having a pod with 3 CPUs to assign, but not enough isolated cpus to assign...failed")
 				klog.InfoS("EIC: I have a pod with 3 CPUs to assign, but not enough isolated cpus to assign...FAILED!")
 
 				return error
 			}
+
+			klog.InfoS("EIC: The number of assigned cpus for the pod is ", fmt.Sprint(setOfCpus.Size()))
+			klog.InfoS("EIC: The cpus assigned for the pod are: ", fmt.Sprint(setOfCpus))
 		}
 
 		s.SetCPUSet(string(pod.UID), container.Name, setOfCpus)
@@ -432,24 +480,32 @@ func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerNa
 	if toRelease, ok := s.GetCPUSet(podUID, containerName); ok {
 		s.Delete(podUID, containerName)
 		// Mutate the shared pool, adding released cpus.
-		toInvestigate = toRelease.Clone()
 		toRelease = toRelease.Difference(cpusInUse)
+		toInvestigate = toRelease.Clone()
 		s.SetDefaultCPUSet(s.GetDefaultCPUSet().Union(toRelease))
 	}
+
+	klog.InfoS("EIC: MAP IS: ", fmt.Sprint(p.cpusIsolatedAssigned))
+	klog.InfoS("EIC: The cpus assigned for the pod are: ", fmt.Sprint(toInvestigate))
+	klog.InfoS("EIC: The cpus isolated assignated for pod ", podUID, " are: ", fmt.Sprint(p.cpusIsolatedAssigned[podUID]))
 
 	// EIC -> after deleting a container, we check if each cpu from list cpusInUse
 	//        is in the list of isolated assigned cpus for it's pod; if it does,
 	//        then we will remove the element from the list of assigned cpus and
 	//        add the cpu in the list of available isolated cpus for the pod
-	for cpu := range toInvestigate.ToSlice() {
+	for _, cpu := range toInvestigate.ToSlice() {
 		klog.InfoS("EIC: Checking if there is a cpu in the list of isolated assigned cpus for pod ", podUID)
-		if p.cpusIsolatedAssigned[podUID].Contains(cpu) {
+		check := p.cpusIsolatedAssigned[podUID].Contains(cpu)
+		klog.InfoS("EIC: ", fmt.Sprint(check))
+		klog.InfoS("EIC: ", fmt.Sprint(cpu))
+
+		if check {
 			klog.InfoS("EIC: I have found a cpu in the list of assigned cpus for the pod ", podUID)
 			cpuElement := cpuset.NewBuilder()
 			cpuElement.Add(cpu)
 
-			p.cpusIsolatedAssigned[podUID].Difference(cpuElement.Result())
-			p.cpuIsolatedAvailable.Union(cpuElement.Result())
+			p.cpusIsolatedAssigned[podUID] = p.cpusIsolatedAssigned[podUID].Difference(cpuElement.Result())
+			p.cpuIsolatedAvailable = p.cpuIsolatedAvailable.Union(cpuElement.Result())
 		}
 	}
 
