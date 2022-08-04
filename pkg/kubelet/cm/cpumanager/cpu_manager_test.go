@@ -104,6 +104,13 @@ func (p *mockPolicy) Start(s state.State) error {
 	return p.err
 }
 
+func (p *mockPolicy) GetCPUsIsolatedAvailable() cpuset.CPUSet {
+	return cpuset.NewCPUSet()
+}
+
+func (p *mockPolicy) SetCPUsIsolatedAvailable(newListOfAvailableCPUs cpuset.CPUSet) {
+}
+
 func (p *mockPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
 	return p.err
 }
