@@ -626,20 +626,28 @@ func TestStaticPolicyReuseIsolatedCPUs(t *testing.T) {
 				topo:        topoIsolatedSingleSocketHT,
 				pod: makeMultiContainerPod(
 					[]struct{ request, limit string }{
-						{"4000m", "4000m"}}, // 0, 1, 2, 6
+						{"4000m", "4000m"}}, // 2, 3, 4, 7
 					[]struct{ request, limit string }{
-						{"2000m", "2000m"}}), // 3, 6
+						{"2000m", "2000m"}}), // 1, 5
 				containerName:   "initContainer-0",
 				stAssignments:   state.ContainerCPUAssignments{},
 				stDefaultCPUSet: cpuset.NewCPUSet(0, 1, 2, 3, 4, 5, 6, 7),
 			},
-			expCSetAfterAlloc:  cpuset.NewCPUSet(4, 5, 7),
-			expCSetAfterRemove: cpuset.NewCPUSet(0, 1, 2, 4, 5, 7),
+			expCSetAfterAlloc:  cpuset.NewCPUSet(0, 6),
+			expCSetAfterRemove: cpuset.NewCPUSet(0, 2, 3, 4, 6, 7),
 		},
 	}
 
 	for _, testCase := range testCases {
 		policy, _ := NewStaticPolicy(testCase.topo, testCase.numReservedCPUs, cpuset.NewCPUSet(), topologymanager.NewFakeManager(), nil)
+
+		isolatedCPU := cpuset.NewBuilder()
+		isolatedCPU.Add(2)
+
+		newListOfAvailableCPUs := policy.GetCPUsIsolatedAvailable()
+		newListOfAvailableCPUs = newListOfAvailableCPUs.Union(isolatedCPU.Result())
+
+		policy.SetCPUsIsolatedAvailable(newListOfAvailableCPUs)
 
 		st := &mockState{
 			assignments:   testCase.stAssignments,

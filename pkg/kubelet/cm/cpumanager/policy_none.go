@@ -19,7 +19,7 @@ package cpumanager
 import (
 	"fmt"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpumanager/state"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpuset"
@@ -48,6 +48,13 @@ func (p *nonePolicy) Name() string {
 func (p *nonePolicy) Start(s state.State) error {
 	klog.InfoS("None policy: Start")
 	return nil
+}
+
+func (p *nonePolicy) GetCPUsIsolatedAvailable() cpuset.CPUSet {
+	return cpuset.NewCPUSet()
+}
+
+func (p *nonePolicy) SetCPUsIsolatedAvailable(newListOfAvailableCPUs cpuset.CPUSet) {
 }
 
 func (p *nonePolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
