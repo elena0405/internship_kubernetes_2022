@@ -201,7 +201,59 @@ func mymakePod(podUID, containerName, cpuRequest, cpuLimit string, mybool bool) 
 		if pod.ObjectMeta.Annotations == nil {
 			pod.ObjectMeta.Annotations = make(map[string]string)
 		}
-		pod.ObjectMeta.Annotations["keysight"] = "isgood"
+		pod.ObjectMeta.Annotations["keysight_t"] = "2"
+	}
+
+	return pod
+}
+
+func mymakeMultiContainerPod(initCPUs, appCPUs []struct{ request, limit string }, t string) *v1.Pod {
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod",
+			UID:  "podUID",
+		},
+		Spec: v1.PodSpec{
+			InitContainers: []v1.Container{},
+			Containers:     []v1.Container{},
+		},
+	}
+
+	if pod.ObjectMeta.Annotations == nil {
+		pod.ObjectMeta.Annotations = make(map[string]string)
+	}
+	pod.ObjectMeta.Annotations["keysight_t"] = t
+
+	for i, cpu := range initCPUs {
+		pod.Spec.InitContainers = append(pod.Spec.InitContainers, v1.Container{
+			Name: "initContainer-" + strconv.Itoa(i),
+			Resources: v1.ResourceRequirements{
+				Requests: v1.ResourceList{
+					v1.ResourceName(v1.ResourceCPU):    resource.MustParse(cpu.request),
+					v1.ResourceName(v1.ResourceMemory): resource.MustParse("1G"),
+				},
+				Limits: v1.ResourceList{
+					v1.ResourceName(v1.ResourceCPU):    resource.MustParse(cpu.limit),
+					v1.ResourceName(v1.ResourceMemory): resource.MustParse("1G"),
+				},
+			},
+		})
+	}
+
+	for i, cpu := range appCPUs {
+		pod.Spec.Containers = append(pod.Spec.Containers, v1.Container{
+			Name: "appContainer-" + strconv.Itoa(i),
+			Resources: v1.ResourceRequirements{
+				Requests: v1.ResourceList{
+					v1.ResourceName(v1.ResourceCPU):    resource.MustParse(cpu.request),
+					v1.ResourceName(v1.ResourceMemory): resource.MustParse("1G"),
+				},
+				Limits: v1.ResourceList{
+					v1.ResourceName(v1.ResourceCPU):    resource.MustParse(cpu.limit),
+					v1.ResourceName(v1.ResourceMemory): resource.MustParse("1G"),
+				},
+			},
+		})
 	}
 
 	return pod

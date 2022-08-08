@@ -213,6 +213,7 @@ func TestStaticPolicyAdd(t *testing.T) {
 			},
 			stDefaultCPUSet: cpuset.NewCPUSet(0, 1, 4, 5),
 			pod:             mymakePod("fakePod", "fakeContainer3", "2500m", "2500m", true),
+			// pod: mymakePod("fakePod", "fakeContainer3", "2000m", "2000m", true),
 			// pod:         makePod("fakePod", "fakeContainer3", "2000m", "2000m"),
 			expErr:      nil,
 			expCPUAlloc: true,
@@ -625,6 +626,22 @@ func TestStaticPolicyReuseIsolatedCPUs(t *testing.T) {
 			staticPolicyTest: staticPolicyTest{
 				description: "SingleSocketHT, DeAllocOneInitContainer",
 				topo:        topoIsolatedSingleSocketHT,
+				pod: mymakeMultiContainerPod(
+					[]struct{ request, limit string }{
+						{"4000m", "4000m"}}, // 2, 3, 4, 7
+					[]struct{ request, limit string }{
+						{"2000m", "2000m"}}, "1"), // 1, 5
+				containerName:   "initContainer-0",
+				stAssignments:   state.ContainerCPUAssignments{},
+				stDefaultCPUSet: cpuset.NewCPUSet(0, 1, 2, 3, 4, 5, 6, 7),
+			},
+			expCSetAfterAlloc:  cpuset.NewCPUSet(0, 6),
+			expCSetAfterRemove: cpuset.NewCPUSet(0, 2, 3, 4, 6, 7),
+		},
+		{
+			staticPolicyTest: staticPolicyTest{
+				description: "SingleSocketHT, DeAllocOneInitContainer",
+				topo:        topoIsolatedSingleSocketHT,
 				pod: makeMultiContainerPod(
 					[]struct{ request, limit string }{
 						{"4000m", "4000m"}}, // 2, 3, 4, 7
@@ -636,6 +653,22 @@ func TestStaticPolicyReuseIsolatedCPUs(t *testing.T) {
 			},
 			expCSetAfterAlloc:  cpuset.NewCPUSet(0, 6),
 			expCSetAfterRemove: cpuset.NewCPUSet(0, 2, 3, 4, 6, 7),
+		},
+		{
+			staticPolicyTest: staticPolicyTest{
+				description: "SingleSocketHT, DeAllocOneInitContainer",
+				topo:        topoIsolatedSingleSocketHT,
+				pod: mymakeMultiContainerPod(
+					[]struct{ request, limit string }{
+						{"4000m", "4000m"}}, // 2, 3, 6, 7
+					[]struct{ request, limit string }{
+						{"2000m", "2000m"}}, "2"), // 0, 1
+				containerName:   "initContainer-0",
+				stAssignments:   state.ContainerCPUAssignments{},
+				stDefaultCPUSet: cpuset.NewCPUSet(0, 1, 2, 3, 4, 5, 6, 7),
+			},
+			expCSetAfterAlloc:  cpuset.NewCPUSet(4, 5),
+			expCSetAfterRemove: cpuset.NewCPUSet(2, 3, 4, 5, 6, 7),
 		},
 	}
 
