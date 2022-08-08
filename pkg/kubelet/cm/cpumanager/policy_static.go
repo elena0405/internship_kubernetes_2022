@@ -48,13 +48,9 @@ type SMTAlignmentError struct {
 	CpusPerCore   int
 }
 
-// EIC -> propabil o eroare de organizare a core-urilor ??
-
 func (e SMTAlignmentError) Error() string {
 	return fmt.Sprintf("SMT Alignment Error: requested %d cpus not multiple cpus per core = %d", e.RequestedCPUs, e.CpusPerCore)
 }
-
-// EIC -> probabil o eroare de aliniere ??
 
 func (e SMTAlignmentError) Type() string {
 	return ErrorSMTAlignment
@@ -100,26 +96,18 @@ func (e SMTAlignmentError) Type() string {
 // reconcile period.
 type staticPolicy struct {
 	// cpu socket topology
-	// EIC -> topologia de socket
 	topology *topology.CPUTopology
 	// set of CPUs that is not available for exclusive assignment
-	// EIC -> set de procesoare rezervate
 	reserved cpuset.CPUSet
-
-	// EIC -> set de cpu-uri izolate disponibile
+	// EIC -> set of available isolated cpus
 	cpusIsolatedAvailable cpuset.CPUSet
-
-	// EIC -> mapa cu cpu-uri izolate asignate pentru fiecare cpu
+	// EIC -> set of isolated assigned cpus for each pod
 	cpusIsolatedAssigned map[string]cpuset.CPUSet
-
 	// topology manager reference to get container Topology affinity
-	// EIC -> manager de topologii
 	affinity topologymanager.Store
 	// set of CPUs to reuse across allocations in a pod
-	// EIC -> set de procesoare ce pot fi refolosite
 	cpusToReuse map[string]cpuset.CPUSet
 	// options allow to fine-tune the behaviour of the policy
-	// EIC -> optiuni
 	options StaticPolicyOptions
 }
 
@@ -139,8 +127,6 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 
 	info, _ := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
 
-	// EIC -> Q: vad ca aici, la policy, nu ii da acel set de procesoare reverzate...oare se inlocuieste cu nil?
-	//        A: gata, am vazut acum, aloca mai jos
 	policy := &staticPolicy{
 		topology:              topology,
 		cpusIsolatedAvailable: info.CPUsInfo.ExlusiveCPUs.Clone(),
@@ -153,9 +139,9 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 	klog.InfoS("EIC to MNFC: cpusIsolatedAvailable: ", fmt.Sprint(policy.cpusIsolatedAvailable))
 
 	allCPUs := topology.CPUDetails.CPUs()
-	// EIC -> aici declar o variabila numita reserved de tip cpuset.CPUSet
+
 	var reserved cpuset.CPUSet
-	// EIC -> daca a, deja un set de procesoare rezervate date ca parametru, ii atribui valoarea variabilei reserved
+
 	if reservedCPUs.Size() > 0 {
 		reserved = reservedCPUs
 	} else {
@@ -164,9 +150,6 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 		//
 		// For example: Given a system with 8 CPUs available and HT enabled,
 		// if numReservedCPUs=2, then reserved={0,4}
-
-		// EIC -> in caz contrar, iau un numar de procesoare egal cu numarul dat ca parametru, dupa o anumita topologie;
-		//        cred ca se aleg cele cu ID-ul mai mic
 		reserved, _ = policy.takeByTopology(allCPUs, numReservedCPUs)
 	}
 
@@ -181,13 +164,10 @@ func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reserv
 	return policy, nil
 }
 
-// EIC -> intoarce numele unei politici
-
 func (p *staticPolicy) Name() string {
 	return string(PolicyStatic)
 }
 
-// EIC -> policy.Start(state)
 func (p *staticPolicy) Start(s state.State) error {
 	if err := p.validateState(s); err != nil {
 		klog.ErrorS(err, "Static policy invalid state, please drain node and remove policy state file")
@@ -201,9 +181,6 @@ func (p *staticPolicy) validateState(s state.State) error {
 	tmpDefaultCPUset := s.GetDefaultCPUSet()
 
 	// Default cpuset cannot be empty when assignments exist
-
-	// EIC Daca cpuset-ul este gol cand avem assignment-uri, se intoarce un cod de eroare
-
 	if tmpDefaultCPUset.IsEmpty() {
 		if len(tmpAssignments) != 0 {
 			return fmt.Errorf("default cpuset cannot be empty")
@@ -218,8 +195,6 @@ func (p *staticPolicy) validateState(s state.State) error {
 	// 1. Check if the reserved cpuset is not part of default cpuset because:
 	// - kube/system reserved have changed (increased) - may lead to some containers not being able to start
 	// - user tampered with file
-
-	// EIC daca procesoarele rezervate nu sunt printre cpuset-ul default, se intoarce un cod de eroare
 
 	if !p.reserved.Intersection(tmpDefaultCPUset).Equals(p.reserved) {
 		return fmt.Errorf("not all reserved cpus: \"%s\" are present in defaultCpuSet: \"%s\"",
@@ -366,7 +341,7 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 
 		klog.InfoS("EIC: pod UID: ", string(pod.GetUID()))
 
-		// EIC -> if the number of cpus which should be asigned for pod is n, the target is to assign n - 1 isolated cpu;
+		// EIC -> if the number of cpus which should be asigned for pod is n, the target is to assign n - 1 isolated cpus;
 		//        to do that, we should check if the list of available cpus contains at least n - 1 elements; if so, then
 		//        we will extract the first n - 1 elements from the list of available cpus and add them to the map of
 		//        assigned cpus for the pod
@@ -420,8 +395,7 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			klog.InfoS("EIC: I have a pod with ", fmt.Sprint(numCPUs-1), " CPUs to assign, but not enough isolated cpus to assign...FAILED!")
 		}
 
-		// EIC -> printing the number of assigned cpus and the assigned cpus for container
-		klog.InfoS("EIC: The number of assigned cpus for the container is ", fmt.Sprint(setOfCpus.Size()))
+		// EIC -> printing the assigned cpus for container
 		klog.InfoS("EIC: The cpus assigned for the container are: ", fmt.Sprint(setOfCpus))
 
 		s.SetCPUSet(string(pod.UID), container.Name, setOfCpus)
