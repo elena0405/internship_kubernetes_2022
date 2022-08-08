@@ -335,7 +335,6 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 
 			cpuToRemove := cpuset.NewBuilder()
 			cpuToRemove.Add(4)
-			klog.InfoS("EIC: setul de procesoare aferent podului cu numele  chosenone este: ", cpuToRemove)
 			setOfCpus.Difference(cpuToRemove.Result())
 		}
 
