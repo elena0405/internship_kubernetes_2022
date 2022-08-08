@@ -313,7 +313,7 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 
 			// POC:
 			// One way to get SOME info from machine
-			fmt.Println("MNFC prntln: all cpus are: ", p.topology.NumCores)
+			fmt.Println("MNFC println: all cpus are: ", p.topology.NumCores)
 
 			// Better way to get more info
 			// inHostNamespace(bool) ? what it is
