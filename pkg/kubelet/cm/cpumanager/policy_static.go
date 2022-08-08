@@ -18,6 +18,7 @@ package cpumanager
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/google/cadvisor/fs"
 	"github.com/google/cadvisor/machine"
@@ -345,16 +346,28 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 		//        we will extract the first n - 1 elements from the list of available cpus and add them to the map of
 		//        assigned cpus for the pod
 
-		check := p.cpusIsolatedAvailable.Size() >= numCPUs-1
+		// n - 1 ISOL CPUS
+		if pod.ObjectMeta.Annotations["keysight_t"] != "" {
+			fmt.Println("MNFC: my annotation t = ", pod.ObjectMeta.Annotations["keysight_t"])
+		}
+
+		var t int
+		if pod.ObjectMeta.Annotations["keysight_t"] != "" {
+			t, _ = strconv.Atoi(pod.ObjectMeta.Annotations["keysight_t"])
+		} else {
+			t = 1
+		}
+
+		check := p.cpusIsolatedAvailable.Size() >= numCPUs-t
 
 		if check {
-			klog.InfoS("EIC: I have a pod with ", fmt.Sprint(numCPUs), " CPUs to assign and I will assign it ", fmt.Sprint(numCPUs-1), " isolated CPUs!")
+			klog.InfoS("EIC: I have a pod with ", fmt.Sprint(numCPUs), " CPUs to assign and I will assign it ", fmt.Sprint(numCPUs-t), " isolated CPUs!")
 
-			// EIC -> extracting first n - 1 cpus from the set of isolated cpus
+			// EIC -> extracting first n - t cpus from the set of isolated cpus
 			firstIsolatedElements := cpuset.NewBuilder()
 			sliceOfIsolatedCPUs := p.cpusIsolatedAvailable.ToSlice()
 
-			for index := 0; index < numCPUs-1; index = index + 1 {
+			for index := 0; index < numCPUs-t; index = index + 1 {
 				firstIsolatedElements.Add(sliceOfIsolatedCPUs[index])
 			}
 
@@ -365,19 +378,19 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 				p.cpusIsolatedAssigned[string(pod.UID)] = cpuset.NewCPUSet()
 			}
 
-			// EIC -> assigning to pod the n - 1 isolated cpus
+			// EIC -> assigning to pod the n - t isolated cpus
 			p.cpusIsolatedAssigned[string(pod.UID)] = p.cpusIsolatedAssigned[string(pod.UID)].Union(firstIsolatedElements.Result())
 
-			// EIC -> extracting the first n - 1 cpus from the list of assigned cpus for the container
+			// EIC -> extracting the first n - t cpus from the list of assigned cpus for the container
 			firstElementsSet := cpuset.NewBuilder()
 			sliceOfCpus := setOfCpus.ToSlice()
 
-			for index := 0; index < numCPUs-1; index = index + 1 {
+			for index := 0; index < numCPUs-t; index = index + 1 {
 				firstElementsSet.Add(sliceOfCpus[index])
 			}
 
-			// EIC -> replacing the first n - 1 cpus from the list of assigned cpus for the container with the
-			//        first n - 1 cpus extracted from the list of isolated cpus
+			// EIC -> replacing the first n - t cpus from the list of assigned cpus for the container with the
+			//        first n - t cpus extracted from the list of isolated cpus
 			setOfCpus = setOfCpus.Difference(firstElementsSet.Result())
 			setOfCpus = setOfCpus.Union(firstIsolatedElements.Result())
 
@@ -385,13 +398,13 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			cpusForPod = cpusForPod.Union(setOfCpus)
 
 			// EIC -> extracting the cpus assigned to pod from set of default cpus and
-			//        adding to it the first n - 1 cpus from the initial set of cpus assigned to container
+			//        adding to it the first n - t cpus from the initial set of cpus assigned to container
 			s.SetDefaultCPUSet(s.GetDefaultCPUSet().Difference(cpusForPod))
 			s.SetDefaultCPUSet(s.GetDefaultCPUSet().Union(firstElementsSet.Result()))
 		} else {
 			// EIC -> if the container could not receive isolated cpus, an error message will be printed and
 			//        we will move forward
-			klog.InfoS("EIC: I have a pod with ", fmt.Sprint(numCPUs-1), " CPUs to assign, but not enough isolated cpus to assign...FAILED!")
+			klog.InfoS("EIC: I have a pod with ", fmt.Sprint(numCPUs-t), " CPUs to assign, but not enough isolated cpus to assign...FAILED!")
 		}
 
 		// EIC -> printing the assigned cpus for container
@@ -507,12 +520,12 @@ func (p *staticPolicy) guaranteedCPUs(pod *v1.Pod, container *v1.Container) int 
 	}
 
 	cpuQuantity := container.Resources.Requests[v1.ResourceCPU]
-	if pod.ObjectMeta.Annotations["keysight"] != "" {
+	if pod.ObjectMeta.Annotations["keysight_t"] != "" && cpuQuantity.Value()*1000 != cpuQuantity.MilliValue() {
 		return int(cpuQuantity.Value()) - 1
 	}
 
 	if cpuQuantity.Value()*1000 != cpuQuantity.MilliValue() {
-		fmt.Println("value = ", cpuQuantity.Value(), ".Value * 1000 = ", cpuQuantity.Value()*1000, "MilliValue() = ", cpuQuantity.MilliValue())
+		// fmt.Println("value = ", cpuQuantity.Value(), ".Value * 1000 = ", cpuQuantity.Value()*1000, "MilliValue() = ", cpuQuantity.MilliValue())
 		return 0
 	}
 
