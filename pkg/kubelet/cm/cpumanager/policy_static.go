@@ -318,7 +318,6 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 
 		// Call Topology Manager to get the aligned socket affinity across all hint providers.
 		hint := p.affinity.GetAffinity(string(pod.UID), container.Name)
-		klog.InfoS("Am identificat podul cu numele chosenone")
 		klog.InfoS("Topology Affinity", "pod", klog.KObj(pod), "containerName", container.Name, "affinity", hint)
 
 		// Allocate CPUs according to the NUMA affinity contained in the hint.
@@ -501,10 +500,17 @@ func (p *staticPolicy) guaranteedCPUs(pod *v1.Pod, container *v1.Container) int 
 	if v1qos.GetPodQOS(pod) != v1.PodQOSGuaranteed {
 		return 0
 	}
+
 	cpuQuantity := container.Resources.Requests[v1.ResourceCPU]
+	if pod.ObjectMeta.Annotations["keysight"] != "" {
+		return int(cpuQuantity.Value()) - 1
+	}
+
 	if cpuQuantity.Value()*1000 != cpuQuantity.MilliValue() {
+		fmt.Println("value = ", cpuQuantity.Value(), ".Value * 1000 = ", cpuQuantity.Value()*1000, "MilliValue() = ", cpuQuantity.MilliValue())
 		return 0
 	}
+
 	// Safe downcast to do for all systems with < 2.1 billion CPUs.
 	// Per the language spec, `int` is guaranteed to be at least 32 bits wide.
 	// https://golang.org/ref/spec#Numeric_types
