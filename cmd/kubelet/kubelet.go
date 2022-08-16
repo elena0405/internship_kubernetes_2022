@@ -22,6 +22,7 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
 	"math/rand"
 	"os"
 	"time"
@@ -37,7 +38,25 @@ import (
 )
 
 func main() {
+	// pluginPath := "/usr/bin/plugin1.so"
+	// // pluginPath := "EWkubernetes/go-plugins/demo1-plugins"
+
+	// p, err := plugin.Open(pluginPath)
+	// if err != nil {
+	// 	fmt.Println("MNFC err1: ", err.Error())
+	// }
+
+	// fM, err := p.Lookup("M")
+	// if err != nil {
+	// 	fmt.Println("MNFC err2:", err.Error())
+	// }
+	// fM.(func())()
+
 	command := app.NewKubeletCommand()
+
+	// to do: hello world from plugin
+
+	fmt.Println("hello from kubelet main")
 
 	// kubelet uses a config file and does its own special
 	// parsing of flags and that config file. It initializes

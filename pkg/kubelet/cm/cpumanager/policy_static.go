@@ -187,7 +187,9 @@ func (p *staticPolicy) validateState(s state.State) error {
 			return fmt.Errorf("default cpuset cannot be empty")
 		}
 		// state is empty initialize
-		allCPUs := p.topology.CPUDetails.CPUs()
+		// allCPUs := p.topology.CPUDetails.CPUs()
+		info, _ := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
+		allCPUs := p.topology.CPUDetails.CPUs().Difference(info.CPUsInfo.ExlusiveCPUs)
 		s.SetDefaultCPUSet(allCPUs)
 		return nil
 	}
@@ -324,10 +326,6 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 			}
 			fmt.Println("MNFC: numCores from info", info.NumCores)
 
-			// this is a method that calls a func to get info
-			klog.InfoS("MNFC:(call func) isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(p.topology.NumCores).ExlusiveCPUs.String())
-			klog.InfoS("MNFC:(call func) non-isoled CPUs from machineInfo are: ", machine.GetCPUsInfo(p.topology.NumCores).SharedCPUs.String())
-
 			// I think this is the best way to interogate the machine info
 			klog.InfoS("MNFC: isoled CPUs from machineInfo are: ", info.CPUsInfo.ExlusiveCPUs.String())
 			klog.InfoS("MNFC: non-isoled CPUs from machineInfo are: ", info.CPUsInfo.SharedCPUs.String())
@@ -349,6 +347,9 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 		// n - 1 ISOL CPUS
 		if pod.ObjectMeta.Annotations["keysight_t"] != "" {
 			fmt.Println("MNFC: my annotation t = ", pod.ObjectMeta.Annotations["keysight_t"])
+		} else {
+			fmt.Println("no keysight annotation")
+
 		}
 
 		var t int
@@ -438,28 +439,26 @@ func getAssignedCPUsOfSiblings(s state.State, podUID string, containerName strin
 func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
 	klog.InfoS("Static policy: RemoveContainer", "podUID", podUID, "containerName", containerName)
 	cpusInUse := getAssignedCPUsOfSiblings(s, podUID, containerName)
-	var toInvestigate cpuset.CPUSet
-	if toRelease, ok := s.GetCPUSet(podUID, containerName); ok {
+
+	toRelease, ok := s.GetCPUSet(podUID, containerName)
+	if ok {
 		s.Delete(podUID, containerName)
 		// Mutate the shared pool, adding released cpus.
 		toRelease = toRelease.Difference(cpusInUse)
-		toInvestigate = toRelease.Clone()
 		s.SetDefaultCPUSet(s.GetDefaultCPUSet().Union(toRelease))
 	}
 
-	klog.InfoS("EIC: MAP IS: ", fmt.Sprint(p.cpusIsolatedAssigned))
-	klog.InfoS("EIC: The cpus assigned for the pod are: ", fmt.Sprint(toInvestigate))
+	klog.InfoS("EIC: cpuIsolatedAssigned map is", fmt.Sprint(p.cpusIsolatedAssigned))
+	klog.InfoS("EIC: The cpus assigned for the pod are: ", fmt.Sprint(toRelease))
 	klog.InfoS("EIC: The cpus isolated assignated for pod ", podUID, " are: ", fmt.Sprint(p.cpusIsolatedAssigned[podUID]))
 
 	// EIC -> after deleting a container, we check if each cpu from list cpusInUse
 	//        is in the list of isolated assigned cpus for it's pod; if it does,
 	//        then we will remove the element from the list of assigned cpus and
 	//        add the cpu in the list of available isolated cpus for the pod
-	for _, cpu := range toInvestigate.ToSlice() {
-		klog.InfoS("EIC: Checking if there is a cpu in the list of isolated assigned cpus for pod ", podUID)
+	for _, cpu := range toRelease.ToSlice() {
+		klog.InfoS("MNFC: Checking if container ", containerName, " has the cpu", cpu, "isolated")
 		check := p.cpusIsolatedAssigned[podUID].Contains(cpu)
-		klog.InfoS("EIC: ", fmt.Sprint(check))
-		klog.InfoS("EIC: ", fmt.Sprint(cpu))
 
 		if check {
 			klog.InfoS("EIC: I have found a cpu in the list of assigned cpus for the pod ", podUID)
