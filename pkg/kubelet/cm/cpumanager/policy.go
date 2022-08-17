@@ -46,3 +46,26 @@ type Policy interface {
 	// EIC -> SetCPUsIsolatedAvailable changes the list of available isolated cpus with the list given as parameter
 	SetCPUsIsolatedAvailable(newListOfAvailableCPUs cpuset.CPUSet)
 }
+
+type SiblingsPolicy interface {
+	Name() string
+	SiblingsStart(s state.State) error
+	// Allocate call is idempotent
+	SiblingsAllocate(s state.State, pod *v1.Pod, container *v1.Container) error
+	// RemoveContainer call is idempotent
+	SiblingsRemoveContainer(s state.State, podUID string, containerName string) error
+	// GetTopologyHints implements the topologymanager.HintProvider Interface
+	// and is consulted to achieve NUMA aware resource alignment among this
+	// and other resource controllers.
+	SiblingsGetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint
+	// GetPodTopologyHints implements the topologymanager.HintProvider Interface
+	// and is consulted to achieve NUMA aware resource alignment per Pod
+	// among this and other resource controllers.
+	GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint
+	// GetAllocatableCPUs returns the assignable (not allocated) CPUs
+	SiblingsGetAllocatableCPUs(m state.State) cpuset.CPUSet
+	// EIC -> GetCPUsIsolatedAvailable returns the list of available isolated cpus
+	SiblingsGetCPUsIsolatedAvailable() cpuset.CPUSet
+	// EIC -> SetCPUsIsolatedAvailable changes the list of available isolated cpus with the list given as parameter
+	SiblingsSetCPUsIsolatedAvailable(newListOfAvailableCPUs cpuset.CPUSet)
+}

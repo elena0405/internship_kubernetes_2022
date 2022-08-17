@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubelet/cm/topologymanager/bitmask"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
