@@ -96,7 +96,8 @@ type Manager interface {
 
 type manager struct {
 	sync.Mutex
-	policy Policy
+	policy         Policy
+	siblingsPolicy SiblingsPolicy
 
 	// reconcilePeriod is the duration between calls to reconcileState.
 	reconcilePeriod time.Duration
@@ -152,13 +153,16 @@ func (s *sourcesReadyStub) AllReady() bool          { return true }
 // NewManager creates new cpu manager based on provided policy
 func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
 	var topo *topology.CPUTopology
-	var policy Policy
 	var err error
+	//var manager *manager
+	var staticPolicy Policy
+	var myManager *manager
+	var siblingsPolicy SiblingsPolicy
 
 	switch policyName(cpuPolicyName) {
 
 	case PolicyNone:
-		policy, err = NewNonePolicy(cpuPolicyOptions)
+		staticPolicy, err = NewNonePolicy(cpuPolicyOptions)
 		if err != nil {
 			return nil, fmt.Errorf("new none policy error: %w", err)
 		}
@@ -188,54 +192,125 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		// exclusively allocated.
 		reservedCPUsFloat := float64(reservedCPUs.MilliValue()) / 1000
 		numReservedCPUs := int(math.Ceil(reservedCPUsFloat))
-		policy, err = NewStaticPolicy(topo, numReservedCPUs, specificCPUs, affinity, cpuPolicyOptions)
+		staticPolicy, err = NewStaticPolicy(topo, numReservedCPUs, specificCPUs, affinity, cpuPolicyOptions)
 		if err != nil {
 			return nil, fmt.Errorf("new static policy error: %w", err)
 		}
+
+		myManager = &manager{
+			policy:                     staticPolicy,
+			siblingsPolicy:             nil,
+			reconcilePeriod:            reconcilePeriod,
+			lastUpdateState:            state.NewMemoryState(),
+			topology:                   topo,
+			nodeAllocatableReservation: nodeAllocatableReservation,
+			stateFileDirectory:         stateFileDirectory,
+		}
+
+		myManager.sourcesReady = &sourcesReadyStub{}
+
+	case PolicySiblings:
+		topo, err = topology.Discover(machineInfo)
+		if err != nil {
+			return nil, err
+		}
+		klog.InfoS("Detected CPU topology", "topology", topo)
+
+		reservedCPUs, ok := nodeAllocatableReservation[v1.ResourceCPU]
+		if !ok {
+			// The static policy cannot initialize without this information.
+			return nil, fmt.Errorf("[cpumanager] unable to determine reserved CPU resources for siblings policy")
+		}
+		if reservedCPUs.IsZero() {
+			// The static policy requires this to be nonzero. Zero CPU reservation
+			// would allow the shared pool to be completely exhausted. At that point
+			// either we would violate our guarantee of exclusivity or need to evict
+			// any pod that has at least one container that requires zero CPUs.
+			// See the comments in policy_static.go for more details.
+			return nil, fmt.Errorf("[cpumanager] the siblings policy requires systemreserved.cpu + kubereserved.cpu to be greater than zero")
+		}
+
+		// Take the ceiling of the reservation, since fractional CPUs cannot be
+		// exclusively allocated.
+		reservedCPUsFloat := float64(reservedCPUs.MilliValue()) / 1000
+		numReservedCPUs := int(math.Ceil(reservedCPUsFloat))
+		siblingsPolicy, err = NewSiblingsPolicy(topo, numReservedCPUs, specificCPUs, affinity, cpuPolicyOptions)
+		if err != nil {
+			return nil, fmt.Errorf("new static policy error: %w", err)
+		}
+
+		myManager := &manager{
+			policy:                     nil,
+			siblingsPolicy:             siblingsPolicy,
+			reconcilePeriod:            reconcilePeriod,
+			lastUpdateState:            state.NewMemoryState(),
+			topology:                   topo,
+			nodeAllocatableReservation: nodeAllocatableReservation,
+			stateFileDirectory:         stateFileDirectory,
+		}
+
+		myManager.sourcesReady = &sourcesReadyStub{}
 
 	default:
 		return nil, fmt.Errorf("unknown policy: \"%s\"", cpuPolicyName)
 	}
 
-	manager := &manager{
-		policy:                     policy,
-		reconcilePeriod:            reconcilePeriod,
-		lastUpdateState:            state.NewMemoryState(),
-		topology:                   topo,
-		nodeAllocatableReservation: nodeAllocatableReservation,
-		stateFileDirectory:         stateFileDirectory,
-	}
-	manager.sourcesReady = &sourcesReadyStub{}
-	return manager, nil
+	return myManager, nil
 }
 
 func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, containerRuntime runtimeService, initialContainers containermap.ContainerMap) error {
-	klog.InfoS("Starting CPU manager", "policy", m.policy.Name())
-	klog.InfoS("Reconciling", "reconcilePeriod", m.reconcilePeriod)
+	var stateImpl state.State
+	var err error
+
+	if m.policy != nil {
+		klog.InfoS("Starting CPU manager", "policy", m.policy.Name())
+	} else if m.siblingsPolicy != nil {
+		klog.InfoS("Starting CPU manager", "policy", m.siblingsPolicy.Name())
+	}
+
 	m.sourcesReady = sourcesReady
 	m.activePods = activePods
 	m.podStatusProvider = podStatusProvider
 	m.containerRuntime = containerRuntime
 	m.containerMap = initialContainers
 
-	stateImpl, err := state.NewCheckpointState(m.stateFileDirectory, cpuManagerStateFileName, m.policy.Name(), m.containerMap)
+	if m.policy != nil {
+		stateImpl, err = state.NewCheckpointState(m.stateFileDirectory, cpuManagerStateFileName, m.policy.Name(), m.containerMap)
+	} else if m.siblingsPolicy != nil {
+		stateImpl, err = state.NewCheckpointState(m.stateFileDirectory, cpuManagerStateFileName, m.siblingsPolicy.Name(), m.containerMap)
+	}
+
 	if err != nil {
 		klog.ErrorS(err, "Could not initialize checkpoint manager, please drain node and remove policy state file")
 		return err
 	}
 	m.state = stateImpl
 
-	err = m.policy.Start(m.state)
+	if m.policy != nil {
+		err = m.policy.Start(m.state)
+	} else if m.siblingsPolicy != nil {
+		err = m.siblingsPolicy.SiblingsStart(m.state)
+	}
+
 	if err != nil {
 		klog.ErrorS(err, "Policy start error")
 		return err
 	}
 
-	m.allocatableCPUs = m.policy.GetAllocatableCPUs(m.state)
+	if m.policy != nil {
+		m.allocatableCPUs = m.policy.GetAllocatableCPUs(m.state)
 
-	if m.policy.Name() == string(PolicyNone) {
-		return nil
+		if m.policy.Name() == string(PolicyNone) {
+			return nil
+		}
+	} else if m.siblingsPolicy != nil {
+		m.allocatableCPUs = m.siblingsPolicy.SiblingsGetAllocatableCPUs(m.state)
+
+		if m.siblingsPolicy.Name() == string(PolicyNone) {
+			return nil
+		}
 	}
+
 	// Periodically call m.reconcileState() to continue to keep the CPU sets of
 	// all pods in sync with and guaranteed CPUs handed out among them.
 	go wait.Until(func() { m.reconcileState() }, m.reconcilePeriod, wait.NeverStop)
@@ -243,6 +318,7 @@ func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesRe
 }
 
 func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
+	var err error
 	// The pod is during the admission phase. We need to save the pod to avoid it
 	// being cleaned before the admission ended
 	m.setPodPendingAdmission(p)
@@ -254,7 +330,12 @@ func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
 	defer m.Unlock()
 
 	// Call down into the policy to assign this container CPUs if required.
-	err := m.policy.Allocate(m.state, p, c)
+	if m.policy != nil {
+		err = m.policy.Allocate(m.state, p, c)
+	} else if m.siblingsPolicy != nil {
+		err = m.siblingsPolicy.SiblingsAllocate(m.state, p, c)
+	}
+
 	if err != nil {
 		klog.ErrorS(err, "Allocate error")
 		return err
@@ -273,10 +354,12 @@ func (m *manager) AddContainer(pod *v1.Pod, container *v1.Container, containerID
 }
 
 func (m *manager) RemoveContainer(containerID string) error {
+	var err error
+
 	m.Lock()
 	defer m.Unlock()
 
-	err := m.policyRemoveContainerByID(containerID)
+	err = m.policyRemoveContainerByID(containerID)
 	if err != nil {
 		klog.ErrorS(err, "RemoveContainer error")
 		return err
@@ -301,7 +384,14 @@ func (m *manager) policyRemoveContainerByID(containerID string) error {
 }
 
 func (m *manager) policyRemoveContainerByRef(podUID string, containerName string) error {
-	err := m.policy.RemoveContainer(m.state, podUID, containerName)
+	var err error
+
+	if m.policy != nil {
+		err = m.policy.RemoveContainer(m.state, podUID, containerName)
+	} else if m.siblingsPolicy != nil {
+		err = m.siblingsPolicy.SiblingsRemoveContainer(m.state, podUID, containerName)
+	}
+
 	if err == nil {
 		m.lastUpdateState.Delete(podUID, containerName)
 		m.containerMap.RemoveByContainerRef(podUID, containerName)
@@ -315,23 +405,39 @@ func (m *manager) State() state.Reader {
 }
 
 func (m *manager) GetTopologyHints(pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint {
+	var returned map[string][]topologymanager.TopologyHint
 	// The pod is during the admission phase. We need to save the pod to avoid it
 	// being cleaned before the admission ended
 	m.setPodPendingAdmission(pod)
 	// Garbage collect any stranded resources before providing TopologyHints
 	m.removeStaleState()
 	// Delegate to active policy
-	return m.policy.GetTopologyHints(m.state, pod, container)
+	if m.policy != nil {
+		returned = m.policy.GetTopologyHints(m.state, pod, container)
+	} else if m.siblingsPolicy != nil {
+		returned = m.siblingsPolicy.SiblingsGetTopologyHints(m.state, pod, container)
+	}
+
+	return returned
 }
 
 func (m *manager) GetPodTopologyHints(pod *v1.Pod) map[string][]topologymanager.TopologyHint {
+	var returned map[string][]topologymanager.TopologyHint
+
 	// The pod is during the admission phase. We need to save the pod to avoid it
 	// being cleaned before the admission ended
 	m.setPodPendingAdmission(pod)
 	// Garbage collect any stranded resources before providing TopologyHints
 	m.removeStaleState()
 	// Delegate to active policy
-	return m.policy.GetPodTopologyHints(m.state, pod)
+
+	if m.policy != nil {
+		returned = m.policy.GetPodTopologyHints(m.state, pod)
+	} else if m.siblingsPolicy != nil {
+		returned = m.siblingsPolicy.GetPodTopologyHints(m.state, pod)
+	}
+
+	return returned
 }
 
 func (m *manager) GetAllocatableCPUs() cpuset.CPUSet {
