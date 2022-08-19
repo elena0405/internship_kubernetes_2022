@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"plugin"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -38,19 +39,19 @@ import (
 )
 
 func main() {
-	// pluginPath := "/usr/bin/plugin1.so"
-	// // pluginPath := "EWkubernetes/go-plugins/demo1-plugins"
+	pluginPath := "/usr/bin/plugin1.so"
+	// pluginPath := "EWkubernetes/go-plugins/demo1-plugins"
 
-	// p, err := plugin.Open(pluginPath)
-	// if err != nil {
-	// 	fmt.Println("MNFC err1: ", err.Error())
-	// }
+	p, err := plugin.Open(pluginPath)
+	if err != nil {
+		fmt.Println("MNFC err1: ", err.Error())
+	}
 
-	// fM, err := p.Lookup("M")
-	// if err != nil {
-	// 	fmt.Println("MNFC err2:", err.Error())
-	// }
-	// fM.(func())()
+	fM, err := p.Lookup("M")
+	if err != nil {
+		fmt.Println("MNFC err2:", err.Error())
+	}
+	fM.(func())()
 
 	command := app.NewKubeletCommand()
 

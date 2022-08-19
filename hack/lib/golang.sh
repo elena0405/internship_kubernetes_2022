@@ -675,6 +675,8 @@ kube::golang::build_some_binaries() {
    else
     V=2 kube::log::info "Coverage is disabled."
     go install "${build_args[@]}" "$@"
+    echo 'MNFC: '
+    echo ${build_args[@]} "$@"
    fi
 }
 
