@@ -71,8 +71,52 @@ type StaticPolicyOptions struct {
 	DistributeCPUsAcrossNUMA bool
 }
 
+type SiblingsPolicyOptions struct {
+	// flag to enable extra allocation restrictions to avoid
+	// different containers to possibly end up on the same core.
+	// we consider "core" and "physical CPU" synonim here, leaning
+	// towards the terminoloy k8s hints. We acknowledge this is confusing.
+	//
+	// looking at https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/,
+	// any possible naming scheme will lead to ambiguity to some extent.
+	// We picked "pcpu" because it the established docs hints at vCPU already.
+	FullPhysicalCPUsOnly bool
+	// Flag to evenly distribute CPUs across NUMA nodes in cases where more
+	// than one NUMA node is required to satisfy the allocation.
+	DistributeCPUsAcrossNUMA bool
+}
+
 func NewStaticPolicyOptions(policyOptions map[string]string) (StaticPolicyOptions, error) {
 	opts := StaticPolicyOptions{}
+	for name, value := range policyOptions {
+		if err := CheckPolicyOptionAvailable(name); err != nil {
+			return opts, err
+		}
+
+		switch name {
+		case FullPCPUsOnlyOption:
+			optValue, err := strconv.ParseBool(value)
+			if err != nil {
+				return opts, fmt.Errorf("bad value for option %q: %w", name, err)
+			}
+			opts.FullPhysicalCPUsOnly = optValue
+		case DistributeCPUsAcrossNUMAOption:
+			optValue, err := strconv.ParseBool(value)
+			if err != nil {
+				return opts, fmt.Errorf("bad value for option %q: %w", name, err)
+			}
+			opts.DistributeCPUsAcrossNUMA = optValue
+		default:
+			// this should never be reached, we already detect unknown options,
+			// but we keep it as further safety.
+			return opts, fmt.Errorf("unsupported cpumanager option: %q (%s)", name, value)
+		}
+	}
+	return opts, nil
+}
+
+func NewSiblingsPolicyOptions(policyOptions map[string]string) (SiblingsPolicyOptions, error) {
+	opts := SiblingsPolicyOptions{}
 	for name, value := range policyOptions {
 		if err := CheckPolicyOptionAvailable(name); err != nil {
 			return opts, err

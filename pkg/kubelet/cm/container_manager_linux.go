@@ -322,6 +322,7 @@ func NewContainerManager(mountUtil mount.Interface, cadvisorInterface cadvisor.I
 			nodeConfig.KubeletRootDir,
 			cm.topologyManager,
 		)
+
 		if err != nil {
 			klog.ErrorS(err, "Failed to initialize cpu manager")
 			return nil, err
@@ -338,6 +339,7 @@ func NewContainerManager(mountUtil mount.Interface, cadvisorInterface cadvisor.I
 			nodeConfig.KubeletRootDir,
 			cm.topologyManager,
 		)
+
 		if err != nil {
 			klog.ErrorS(err, "Failed to initialize memory manager")
 			return nil, err

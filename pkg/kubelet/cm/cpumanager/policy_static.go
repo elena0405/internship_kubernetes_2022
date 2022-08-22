@@ -171,7 +171,6 @@ func (p *staticPolicy) validateState(s state.State) error {
 			return fmt.Errorf("default cpuset cannot be empty")
 		}
 		// state is empty initialize
-		// allCPUs := p.topology.CPUDetails.CPUs()
 		info, _ := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
 		allCPUs := p.topology.CPUDetails.CPUs().Difference(info.CPUsInfo.ExlusiveCPUs)
 		s.SetDefaultCPUSet(allCPUs)
@@ -309,10 +308,6 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 				klog.InfoS("MNFC: error at Info func")
 			}
 			fmt.Println("MNFC: numCores from info", info.NumCores)
-
-			// I think this is the best way to interogate the machine info
-			klog.InfoS("MNFC: isoled CPUs from machineInfo are: ", info.CPUsInfo.ExlusiveCPUs.String())
-			klog.InfoS("MNFC: non-isoled CPUs from machineInfo are: ", info.CPUsInfo.SharedCPUs.String())
 
 			// end of POC
 

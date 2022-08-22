@@ -41,7 +41,7 @@ const (
 	PolicySiblings policyName = "siblings"
 )
 
-// staticPolicy is a CPU manager policy that does not change CPU
+// siblingsPolicy is a CPU manager policy that does not change CPU
 // assignments for exclusively pinned guaranteed containers after the main
 // container process starts.
 //
@@ -51,7 +51,7 @@ const (
 // - The pod QoS class is Guaranteed.
 // - The CPU request is a positive integer.
 //
-// The static policy maintains the following sets of logical CPUs:
+// The siblings policy maintains the following sets of logical CPUs:
 //
 // - SHARED: Burstable, BestEffort, and non-integral Guaranteed containers
 //   run here. Initially this contains all CPU IDs on the system. As
@@ -72,7 +72,7 @@ const (
 // - EXCLUSIVE ALLOCATIONS: CPU sets assigned exclusively to one container.
 //   These are stored as explicit assignments in the state.
 //
-// When an exclusive allocation is made, the static policy also updates the
+// When an exclusive allocation is made, the siblings policy also updates the
 // default cpuset in the state abstraction. The CPU manager's periodic
 // reconcile loop takes care of rewriting the cpuset in cgroupfs for any
 // containers that may be running in the shared pool. For this reason,
@@ -93,17 +93,17 @@ type siblingsPolicy struct {
 	// set of CPUs to reuse across allocations in a pod
 	cpusToReuse map[string]cpuset.CPUSet
 	// options allow to fine-tune the behaviour of the policy
-	options StaticPolicyOptions
+	options SiblingsPolicyOptions
 }
 
-// Ensure staticPolicy implements Policy interface
+// Ensure SiblingsPolicy implements siblingsPolicy interface
 var _ SiblingsPolicy = &siblingsPolicy{}
 
-// NewStaticPolicy returns a CPU manager policy that does not change CPU
+// NewSiblingsPolicy returns a CPU manager policy that does not change CPU
 // assignments for exclusively pinned guaranteed containers after the main
 // container process starts.
 func NewSiblingsPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs cpuset.CPUSet, affinity topologymanager.Store, cpuPolicyOptions map[string]string) (SiblingsPolicy, error) {
-	opts, err := NewStaticPolicyOptions(cpuPolicyOptions)
+	opts, err := NewSiblingsPolicyOptions(cpuPolicyOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +150,12 @@ func NewSiblingsPolicy(topology *topology.CPUTopology, numReservedCPUs int, rese
 }
 
 func (p *siblingsPolicy) Name() string {
-	return string(PolicyStatic)
+	return string(PolicySiblings)
 }
 
 func (p *siblingsPolicy) SiblingsStart(s state.State) error {
 	if err := p.SiblingsValidateState(s); err != nil {
-		klog.ErrorS(err, "Static policy invalid state, please drain node and remove policy state file")
+		klog.ErrorS(err, "Siblings policy invalid state, please drain node and remove policy state file")
 		return err
 	}
 	return nil
@@ -171,7 +171,8 @@ func (p *siblingsPolicy) SiblingsValidateState(s state.State) error {
 			return fmt.Errorf("default cpuset cannot be empty")
 		}
 		// state is empty initialize
-		allCPUs := p.topology.CPUDetails.CPUs()
+		info, _ := machine.Info(sysfs.NewRealSysFs(), &fs.RealFsInfo{}, true)
+		allCPUs := p.topology.CPUDetails.CPUs().Difference(info.CPUsInfo.ExlusiveCPUs)
 		s.SetDefaultCPUSet(allCPUs)
 		return nil
 	}
@@ -186,7 +187,7 @@ func (p *siblingsPolicy) SiblingsValidateState(s state.State) error {
 			p.reserved.String(), tmpDefaultCPUset.String())
 	}
 
-	// 2. Check if state for static policy is consistent
+	// 2. Check if state for siblings policy is consistent
 	for pod := range tmpAssignments {
 		for container, cset := range tmpAssignments[pod] {
 			// None of the cpu in DEFAULT cset should be in s.assignments
@@ -259,7 +260,7 @@ func (p *siblingsPolicy) SiblingsSetCPUsIsolatedAvailable(newListOfAvailableCPUs
 
 func (p *siblingsPolicy) SiblingsAllocate(s state.State, pod *v1.Pod, container *v1.Container) error {
 	if numCPUs := p.siblingsGuaranteedCPUs(pod, container); numCPUs != 0 {
-		klog.InfoS("Static policy: Allocate", "pod", klog.KObj(pod), "containerName", container.Name)
+		klog.InfoS("Siblings policy: Allocate", "pod", klog.KObj(pod), "containerName", container.Name)
 		// container belongs in an exclusively allocated pool
 
 		if p.options.FullPhysicalCPUsOnly && ((numCPUs % p.topology.CPUsPerCore()) != 0) {
@@ -269,7 +270,7 @@ func (p *siblingsPolicy) SiblingsAllocate(s state.State, pod *v1.Pod, container 
 			// in Failed state, with SMTAlignmentError as reason. Since the allocation happens in terms of physical cores
 			// and the scheduler is responsible for ensuring that the workload goes to a node that has enough CPUs,
 			// the pod would be placed on a node where there are enough physical cores available to be allocated.
-			// Just like the behaviour in case of static policy, takeByTopology will try to first allocate CPUs from the same socket
+			// Just like the behaviour in case of siblings policy, takeByTopology will try to first allocate CPUs from the same socket
 			// and only in case the request cannot be sattisfied on a single socket, CPU allocation is done for a workload to occupy all
 			// CPUs on a physical core. Allocation of individual threads would never have to occur.
 			return SMTAlignmentError{
@@ -279,7 +280,7 @@ func (p *siblingsPolicy) SiblingsAllocate(s state.State, pod *v1.Pod, container 
 		}
 		if setOfCpus, ok := s.GetCPUSet(string(pod.UID), container.Name); ok {
 			p.siblingsUpdateCPUsToReuse(pod, container, setOfCpus)
-			klog.InfoS("Static policy: container already present in state, skipping", "pod", klog.KObj(pod), "containerName", container.Name)
+			klog.InfoS("Siblings policy: container already present in state, skipping", "pod", klog.KObj(pod), "containerName", container.Name)
 			return nil
 		}
 
@@ -420,7 +421,7 @@ func siblingsGetAssignedCPUsOfSiblings(s state.State, podUID string, containerNa
 }
 
 func (p *siblingsPolicy) SiblingsRemoveContainer(s state.State, podUID string, containerName string) error {
-	klog.InfoS("Static policy: RemoveContainer", "podUID", podUID, "containerName", containerName)
+	klog.InfoS("Siblings policy: RemoveContainer", "podUID", podUID, "containerName", containerName)
 	cpusInUse := getAssignedCPUsOfSiblings(s, podUID, containerName)
 	var toInvestigate cpuset.CPUSet
 	if toRelease, ok := s.GetCPUSet(podUID, containerName); ok {
@@ -604,7 +605,7 @@ func (p *siblingsPolicy) SiblingsGetTopologyHints(s state.State, pod *v1.Pod, co
 	}
 }
 
-func (p *siblingsPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
+func (p *siblingsPolicy) SiblingsGetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
 	// Get a count of how many guaranteed CPUs have been requested by Pod.
 	requested := p.siblingsPodGuaranteedCPUs(pod)
 
