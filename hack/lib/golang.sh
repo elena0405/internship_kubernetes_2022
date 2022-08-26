@@ -675,8 +675,54 @@ kube::golang::build_some_binaries() {
    else
     V=2 kube::log::info "Coverage is disabled."
     go install "${build_args[@]}" "$@"
+    echo 'MNFC: '
+    echo ${build_args[@]} "$@"
    fi
 }
+
+# Arguments: a list of kubernetes packages to build.
+# Expected variables: ${build_args} should be set to an array of Go build arguments.
+# In addition, ${package} and ${platform} should have been set earlier, and if
+# ${KUBE_BUILD_WITH_COVERAGE} is set, coverage instrumentation will be enabled.
+#
+# Invokes Go to actually build some packages. If coverage is disabled, simply invokes
+# go install. If coverage is enabled, builds covered binaries using go test, temporarily
+# producing the required unit test files and then cleaning up after itself.
+# Non-covered binaries are then built using go install as usual.
+kube::golang::build_some_plugin_binaries() {
+  if [[ -n "${KUBE_BUILD_WITH_COVERAGE:-}" ]]; then
+    local -a uncovered=()
+    for package in "$@"; do
+      if kube::golang::is_instrumented_package "${package}"; then
+        V=2 kube::log::info "Building ${package} with coverage..."
+
+        kube::golang::create_coverage_dummy_test "${package}"
+        kube::util::trap_add "kube::golang::delete_coverage_dummy_test \"${package}\"" EXIT
+
+        go test -c -o "$(kube::golang::outfile_for_binary "${package}" "${platform}")" \
+          -covermode count \
+          -coverpkg k8s.io/...,k8s.io/kubernetes/vendor/k8s.io/... \
+          "${build_args[@]}" \
+          -tags coverage \
+          "${package}"
+      else
+        uncovered+=("${package}")
+      fi
+    done
+    if [[ "${#uncovered[@]}" != 0 ]]; then
+      V=2 kube::log::info "Building ${uncovered[*]} without coverage..."
+      go install "${build_args[@]}" "${uncovered[@]}"
+    else
+      V=2 kube::log::info "Nothing to build without coverage."
+     fi
+   else
+    V=2 kube::log::info "Coverage is disabled."
+    go build -buildmode=plugin -o plugin1.so "${build_args[@]}" "$@"
+    echo 'MNFC: '
+    echo ${build_args[@]} "$@"
+   fi
+}
+
 
 kube::golang::build_binaries_for_platform() {
   # This is for sanity.  Without it, user umasks can leak through.
@@ -743,6 +789,73 @@ kube::golang::build_binaries_for_platform() {
       "${testpkg}"
   done
 }
+
+kube::golang::build_plugin_binaries_for_platform() {
+  # This is for sanity.  Without it, user umasks can leak through.
+  umask 0022
+
+  local platform=$1
+
+  local -a statics=()
+  local -a nonstatics=()
+  local -a tests=()
+
+  for binary in "${binaries[@]}"; do
+    if [[ "${binary}" =~ ".test"$ ]]; then
+      tests+=("${binary}")
+      kube::log::info "    ${binary} (test)"
+    elif kube::golang::is_statically_linked_library "${binary}"; then
+      statics+=("${binary}")
+      kube::log::info "    ${binary} (static)"
+    else
+      nonstatics+=("${binary}")
+      kube::log::info "    ${binary} (non-static)"
+    fi
+  done
+
+  V=2 kube::log::info "Env for ${platform}: GOOS=${GOOS-} GOARCH=${GOARCH-} GOROOT=${GOROOT-} CGO_ENABLED=${CGO_ENABLED-} CC=${CC-}"
+
+  local -a build_args
+  if [[ "${#statics[@]}" != 0 ]]; then
+    build_args=(
+      -installsuffix=static
+      ${goflags:+"${goflags[@]}"}
+      -gcflags="${gogcflags}"
+      -asmflags="${goasmflags}"
+      -ldflags="${goldflags}"
+      -tags="${gotags:-}"
+    )
+    CGO_ENABLED=0 kube::golang::build_some_plugin_binaries "${statics[@]}"
+  fi
+
+  if [[ "${#nonstatics[@]}" != 0 ]]; then
+    build_args=(
+      ${goflags:+"${goflags[@]}"}
+      -gcflags="${gogcflags}"
+      -asmflags="${goasmflags}"
+      -ldflags="${goldflags}"
+      -tags="${gotags:-}"
+    )
+    kube::golang::build_some_plugin_binaries "${nonstatics[@]}"
+  fi
+
+  for test in "${tests[@]:+${tests[@]}}"; do
+    local outfile testpkg
+    outfile=$(kube::golang::outfile_for_binary "${test}" "${platform}")
+    testpkg=$(dirname "${test}")
+
+    mkdir -p "$(dirname "${outfile}")"
+    go test -c \
+      ${goflags:+"${goflags[@]}"} \
+      -gcflags="${gogcflags}" \
+      -asmflags="${goasmflags}" \
+      -ldflags="${goldflags}" \
+      -tags="${gotags:-}" \
+      -o "${outfile}" \
+      "${testpkg}"
+  done
+}
+
 
 # Return approximate physical memory available in gigabytes.
 kube::golang::get_physmem() {
@@ -883,6 +996,122 @@ kube::golang::build_binaries() {
         (
           kube::golang::set_platform_envs "${platform}"
           kube::golang::build_binaries_for_platform "${platform}"
+        )
+      done
+    fi
+  )
+}
+
+# Build plugin binaries targets specified
+#
+# Input:
+#   $@ - targets and go flags.  If no targets are set then all binaries targets
+#     are built.
+#   KUBE_BUILD_PLATFORMS - Incoming variable of targets to build for.  If unset
+#     then just the host architecture is built.
+kube::golang::build_plugin_binaries() {
+  # Create a sub-shell so that we don't pollute the outer environment
+  (
+    # Check for `go` binary and set ${GOPATH}.
+    kube::golang::setup_env
+    V=2 kube::log::info "Go version: $(GOFLAGS='' go version)"
+
+    local host_platform
+    host_platform=$(kube::golang::host_platform)
+
+    # These are "local" but are visible to and relied on by functions this
+    # function calls.  They are effectively part of the calling API to
+    # build_binaries_for_platform.
+    local goflags goldflags goasmflags gogcflags gotags
+
+    # This is $(pwd) because we use run-in-gopath to build.  Once that is
+    # excised, this can become ${KUBE_ROOT}.
+    local trimroot # two lines to appease shellcheck SC2155
+    trimroot=$(pwd)
+
+    goasmflags="all=-trimpath=${trimroot}"
+
+    gogcflags="all=-trimpath=${trimroot} ${GOGCFLAGS:-}"
+    if [[ "${DBG:-}" == 1 ]]; then
+        # Debugging - disable optimizations and inlining.
+        gogcflags="${gogcflags} -N -l"
+    fi
+
+    goldflags="all=$(kube::version::ldflags) ${GOLDFLAGS:-}"
+    if [[ "${DBG:-}" != 1 ]]; then
+        # Not debugging - disable symbols and DWARF.
+        goldflags="${goldflags} -s -w"
+    fi
+
+    # Extract tags if any specified in GOFLAGS
+    gotags="selinux,notest,$(echo "${GOFLAGS:-}" | sed -ne 's|.*-tags=\([^-]*\).*|\1|p')"
+
+    local -a targets=()
+    local arg
+
+    for arg; do
+      if [[ "${arg}" == -* ]]; then
+        # Assume arguments starting with a dash are flags to pass to go.
+        goflags+=("${arg}")
+      else
+        targets+=("${arg}")
+      fi
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+      targets=("${KUBE_ALL_TARGETS[@]}")
+    fi
+
+    local -a platforms
+    IFS=" " read -ra platforms <<< "${KUBE_BUILD_PLATFORMS:-}"
+    if [[ ${#platforms[@]} -eq 0 ]]; then
+      platforms=("${host_platform}")
+    fi
+
+    local -a binaries
+    while IFS="" read -r binary; do binaries+=("$binary"); done < <(kube::golang::binaries_from_targets "${targets[@]}")
+
+    local parallel=false
+    if [[ ${#platforms[@]} -gt 1 ]]; then
+      local gigs
+      gigs=$(kube::golang::get_physmem)
+
+      if [[ ${gigs} -ge ${KUBE_PARALLEL_BUILD_MEMORY} ]]; then
+        kube::log::status "Multiple platforms requested and available ${gigs}G >= threshold ${KUBE_PARALLEL_BUILD_MEMORY}G, building platforms in parallel"
+        parallel=true
+      else
+        kube::log::status "Multiple platforms requested, but available ${gigs}G < threshold ${KUBE_PARALLEL_BUILD_MEMORY}G, building platforms in serial"
+        parallel=false
+      fi
+    fi
+
+    if [[ "${parallel}" == "true" ]]; then
+      kube::log::status "Building go targets for {${platforms[*]}} in parallel (output will appear in a burst when complete):" "${targets[@]}"
+      local platform
+      for platform in "${platforms[@]}"; do (
+          kube::golang::set_platform_envs "${platform}"
+          kube::log::status "${platform}: build started"
+          kube::golang::build_binaries_for_platform "${platform}"
+          kube::log::status "${platform}: build finished"
+        ) &> "/tmp//${platform//\//_}.build" &
+      done
+
+      local fails=0
+      for job in $(jobs -p); do
+        wait "${job}" || (( fails+=1 ))
+      done
+
+      for platform in "${platforms[@]}"; do
+        cat "/tmp//${platform//\//_}.build"
+      done
+
+      exit "${fails}"
+    else
+      for platform in "${platforms[@]}"; do
+        kube::log::status "Building go targets for ${platform}"
+        (
+          kube::golang::set_platform_envs "${platform}"
+          kube::golang::build_plugin_binaries_for_platform "${platform}"
         )
       done
     fi

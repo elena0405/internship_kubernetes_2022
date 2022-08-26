@@ -25,6 +25,8 @@ import (
 	"math/rand"
 	"os"
 	"time"
+	"fmt"
+	"plugin"
 
 	"github.com/spf13/cobra"
 
@@ -34,9 +36,32 @@ import (
 	_ "k8s.io/component-base/metrics/prometheus/restclient"
 	_ "k8s.io/component-base/metrics/prometheus/version" // for version metric registration
 	"k8s.io/kubernetes/cmd/kubelet/app"
+	"k8s.io/kubernetes/pkg/kubelet/cm/cpuset"
 )
 
 func main() {
+        pluginPath := "/usr/bin/plugin1.so"
+
+	p, err := plugin.Open(pluginPath)
+	if err != nil {
+		fmt.Println("MNFC err1: ", err.Error())
+	}
+
+	fM, err := p.Lookup("M")
+	if err != nil {
+		fmt.Println("MNFC err2:", err.Error())
+	}
+	fM.(func())()
+
+	fV, err := p.Lookup("F_print_V")
+	if err != nil {
+		fmt.Println("MNFC err3:", err.Error())
+	}
+
+	var mycpuSet cpuset.CPUSet = fV.(func() cpuset.CPUSet)()
+	fmt.Println(mycpuSet.String())
+
+
 	command := app.NewKubeletCommand()
 
 	// kubelet uses a config file and does its own special
