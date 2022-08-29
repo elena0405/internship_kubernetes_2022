@@ -94,6 +94,21 @@ all: generated_files
 	hack/make-rules/build.sh $(WHAT)
 endif
 
+define PLUGIN_HELP_INFO
+# Build plugins
+#
+# Example:
+# make plugin
+endef
+.PHONY: plugin
+ifeq ($(PRINT_HELP),y)
+plugin:
+	echo "$$PLUGIN_HELP_INFO"
+else
+plugin: generated_files
+	hack/make-rules/build-plugin.sh $(WHAT)
+endif
+
 define GINKGO_HELP_INFO
 # Build ginkgo
 #
