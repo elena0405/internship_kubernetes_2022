@@ -31,7 +31,7 @@ func M() {
 
 func GetPluginName() string {
 
-	return "plugin1"
+	return "plugin2"
 }
 
 var Foo foo

@@ -18,7 +18,10 @@ package cpumanager
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
 	"math"
+	"plugin"
 	"sync"
 	"time"
 
@@ -149,11 +152,56 @@ type sourcesReadyStub struct{}
 func (s *sourcesReadyStub) AddSource(source string) {}
 func (s *sourcesReadyStub) AllReady() bool          { return true }
 
+func loadPlugin(pluginname string) {
+	fmt.Println("We are in NewManager!")
+	pluginPath := "/home/ixia/kubernetes/myplugins/" + pluginname
+
+	p, err := plugin.Open(pluginPath)
+	if err != nil {
+		fmt.Println("MNFC err1: ", err.Error())
+	}
+
+	fM, err := p.Lookup("M")
+	if err != nil {
+		fmt.Println("MNFC err2:", err.Error())
+	}
+	fM.(func())()
+
+	fV, err := p.Lookup("F_print_V")
+	if err != nil {
+		fmt.Println("MNFC err3:", err.Error())
+	}
+
+	var mycpuSet cpuset.CPUSet = fV.(func() cpuset.CPUSet)()
+	fmt.Println(mycpuSet.String())
+
+	fV2, err := p.Lookup("GetPluginName")
+	if err != nil {
+		fmt.Println("MNFC err3:", err.Error())
+	}
+
+	var mystring string = fV2.(func() string)()
+	fmt.Println("plugin name is: ", mystring)
+}
+
 // NewManager creates new cpu manager based on provided policy
 func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
 	var topo *topology.CPUTopology
 	var policy Policy
 	var err error
+
+	files, err := ioutil.ReadDir("/home/ixia/kubernetes/myplugins")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, file := range files {
+		fmt.Println(file.Name(), file.IsDir())
+
+		if !file.IsDir() {
+			loadPlugin(file.Name())
+		}
+	}
 
 	switch policyName(cpuPolicyName) {
 
