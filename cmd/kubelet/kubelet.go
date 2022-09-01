@@ -51,6 +51,7 @@ func main() {
 	if err != nil {
 		fmt.Println("MNFC err2:", err.Error())
 	}
+
 	fM.(func())()
 
 	command := app.NewKubeletCommand()
