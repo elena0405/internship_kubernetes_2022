@@ -718,6 +718,7 @@ kube::golang::build_some_plugin_binaries() {
    else
     V=2 kube::log::info "Coverage is disabled."
     go build -buildmode=plugin -o plugin1.so "${build_args[@]}" "$@"
+    go build -buildmode=plugin -o plugin2.so "${build_args[@]}" "$@"
     echo 'MNFC: '
     echo ${build_args[@]} "$@"
    fi

@@ -13,10 +13,10 @@ func init() {
 
 var V cpuset.CPUSet
 
-func F_print_V() cpuset.CPUSet {
+func F_modif_V() cpuset.CPUSet {
 	fmt.Println("plugin1: cpuSet variable V= ", V)
 
-	return cpuset.NewCPUSet(9)
+	return cpuset.NewCPUSet(10).Union(V)
 }
 
 type foo struct{}
@@ -35,3 +35,46 @@ func GetPluginName() string {
 }
 
 var Foo foo
+
+// type staticPolicy struct {
+// 	// cpu socket topology
+// 	topology *topology.CPUTopology
+// 	// set of CPUs that is not available for exclusive assignment
+// 	reserved cpuset.CPUSet
+// 	// topology manager reference to get container Topology affinity
+// 	affinity topologymanager.Store
+// 	// set of CPUs to reuse across allocations in a pod
+// 	cpusToReuse map[string]cpuset.CPUSet
+// 	// options allow to fine-tune the behaviour of the policy
+// 	// options StaticPolicyOptions
+// }
+
+// func (p *staticPolicy) GetAllocatableCPUs(s state.State) cpuset.CPUSet {
+// 	return s.GetDefaultCPUSet().Difference(p.reserved)
+// }
+
+// func NewStaticPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs cpuset.CPUSet, affinity topologymanager.Store, cpuPolicyOptions map[string]string) (Policy, error) {
+// 	policy := &staticPolicy{
+// 		topology:    topology,
+// 		affinity:    affinity,
+// 		cpusToReuse: make(map[string]cpuset.CPUSet),
+// 	}
+
+// 	return policy, nil
+// }
+
+// func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
+// 	return nil
+// }
+
+// func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
+// 	return nil
+// }
+
+// func (p *staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint {
+// 	return nil
+// }
+
+// func (p *staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
+// 	return nil
+// }

@@ -152,7 +152,7 @@ type sourcesReadyStub struct{}
 func (s *sourcesReadyStub) AddSource(source string) {}
 func (s *sourcesReadyStub) AllReady() bool          { return true }
 
-func loadPlugin(pluginname string) {
+func loadPlugin(pluginname string) (string, *plugin.Plugin) {
 	fmt.Println("We are in NewManager!")
 	pluginPath := "/home/ixia/kubernetes/myplugins/" + pluginname
 
@@ -167,28 +167,42 @@ func loadPlugin(pluginname string) {
 	}
 	fM.(func())()
 
-	fV, err := p.Lookup("F_print_V")
+	fV, err := p.Lookup("F_modif_V")
 	if err != nil {
 		fmt.Println("MNFC err3:", err.Error())
 	}
 
+	v, err := p.Lookup("V")
+	if err != nil {
+		fmt.Println("MNFC err3:", err.Error())
+	}
+
+	*v.(*cpuset.CPUSet) = cpuset.NewCPUSetInt64(1, 2, 3)
 	var mycpuSet cpuset.CPUSet = fV.(func() cpuset.CPUSet)()
 	fmt.Println(mycpuSet.String())
 
 	fV2, err := p.Lookup("GetPluginName")
 	if err != nil {
-		fmt.Println("MNFC err3:", err.Error())
+		fmt.Println("MNFC err4:", err.Error())
 	}
 
 	var mystring string = fV2.(func() string)()
 	fmt.Println("plugin name is: ", mystring)
+
+	return mystring, p
 }
 
-// NewManager creates new cpu manager based on provided policy
-func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
-	var topo *topology.CPUTopology
-	var policy Policy
-	var err error
+// TODO: ADD MORE FUNCTIONS
+type pluginFuncs struct {
+	GetAllocatableCPUs_symb plugin.Symbol
+	NewStaticPolicy_symb    plugin.Symbol
+	Allocate_symb           plugin.Symbol
+}
+
+func managePlugins() {
+
+	m := make(map[string]*plugin.Plugin)
+	m2 := make(map[string]pluginFuncs)
 
 	files, err := ioutil.ReadDir("/home/ixia/kubernetes/myplugins")
 	if err != nil {
@@ -199,9 +213,28 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		fmt.Println(file.Name(), file.IsDir())
 
 		if !file.IsDir() {
-			loadPlugin(file.Name())
+			pluginName, pluginPointer := loadPlugin(file.Name())
+
+			// TODO: LOOKUP AND POPULATE THE STRUCT
+			funcs := pluginFuncs{}
+
+			m[pluginName] = pluginPointer
+			m2[pluginName] = funcs
 		}
 	}
+
+	fmt.Println("the final plugins map is: ", m)
+	fmt.Println("the final funcs map is: ", m2)
+
+}
+
+// NewManager creates new cpu manager based on provided policy
+func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
+	var topo *topology.CPUTopology
+	var policy Policy
+	var err error
+
+	managePlugins()
 
 	switch policyName(cpuPolicyName) {
 
