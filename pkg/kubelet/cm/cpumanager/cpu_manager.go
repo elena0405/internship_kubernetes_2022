@@ -156,27 +156,27 @@ func (s *sourcesReadyStub) AllReady() bool          { return true }
 
 func loadPlugin(pluginname string) (string, *plugin.Plugin) {
 	fmt.Println("We are in NewManager!")
-	pluginPath := "/home/ixia/kubernetes/myplugins/" + pluginname
+	pluginPath := "/etc/kubernetes/cci/" + pluginname
 
 	p, err := plugin.Open(pluginPath)
 	if err != nil {
-		fmt.Println("MNFC err1: ", err.Error())
+		fmt.Println("err1: ", err.Error())
 	}
 
 	fM, err := p.Lookup("M")
 	if err != nil {
-		fmt.Println("MNFC err2:", err.Error())
+		fmt.Println("err2:", err.Error())
 	}
 	fM.(func())()
 
 	fV, err := p.Lookup("F_modif_V")
 	if err != nil {
-		fmt.Println("MNFC err3:", err.Error())
+		fmt.Println("err3:", err.Error())
 	}
 
 	v, err := p.Lookup("V")
 	if err != nil {
-		fmt.Println("MNFC err3:", err.Error())
+		fmt.Println("err3:", err.Error())
 	}
 
 	*v.(*cpuset.CPUSet) = cpuset.NewCPUSetInt64(1, 2, 3)
@@ -185,7 +185,7 @@ func loadPlugin(pluginname string) (string, *plugin.Plugin) {
 
 	fV2, err := p.Lookup("GetPluginName")
 	if err != nil {
-		fmt.Println("MNFC err4:", err.Error())
+		fmt.Println("err4:", err.Error())
 	}
 
 	var mystring string = fV2.(func() string)()
@@ -199,7 +199,7 @@ type plugin_infos struct {
 	pluginPointer *plugin.Plugin
 
 	GetAllocatableCPUs_symb  plugin.Symbol
-	NewStaticPolicy_symb     plugin.Symbol
+	NewPolicy_symb           plugin.Symbol
 	Allocate_symb            plugin.Symbol
 	RemoveContainer_symb     plugin.Symbol
 	GetTopologyHints_symb    plugin.Symbol
@@ -209,7 +209,7 @@ type plugin_infos struct {
 func managePlugins() (map[string]plugin_infos, error) {
 	pluginsMap := make(map[string]plugin_infos)
 
-	files, err := ioutil.ReadDir("/home/ixia/kubernetes/myplugins")
+	files, err := ioutil.ReadDir("/etc/kubernetes/cci")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func managePlugins() (map[string]plugin_infos, error) {
 			// 	return pluginsMap, err
 			// }
 
-			NewStaticPolicy_symb, err := pluginPointer.Lookup("NewStaticPolicy")
+			NewPolicy_symb, err := pluginPointer.Lookup("NewPolicy")
 			if err != nil {
 				return pluginsMap, err
 			}
@@ -261,7 +261,7 @@ func managePlugins() (map[string]plugin_infos, error) {
 			funcs := plugin_infos{
 				pluginPointer: pluginPointer,
 				// GetAllocatableCPUs_symb:  GetAllocatableCPUs_symb,
-				NewStaticPolicy_symb:     NewStaticPolicy_symb,
+				NewPolicy_symb:           NewPolicy_symb,
 				Allocate_symb:            Allocate_symb,
 				RemoveContainer_symb:     RemoveContainer_symb,
 				GetTopologyHints_symb:    GetTopologyHints_symb,
@@ -302,7 +302,6 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 			return nil, fmt.Errorf("new none policy error: %w", err)
 		}
 
-		// cazul cu care am lucrat pana acum
 	case PolicyStatic:
 		topo, err = topology.Discover(machineInfo)
 		if err != nil {
@@ -386,19 +385,23 @@ func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesRe
 func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
 	fmt.Println("pod name is: ", p.ObjectMeta.Name)
 	fmt.Println("annotation is: ", p.ObjectMeta.Annotations["policy"])
-	f := m.pluginMap[p.ObjectMeta.Annotations["policy"]].Allocate_symb
 
-	fmt.Println("There the magic happends!")
-	fmt.Println(f)
+	if p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"] == "policy1" {
+		f := m.pluginMap[p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"]].Allocate_symb
 
-	if f != nil {
-		fmt.Println("There is a pod requiring policy!")
-		f.(func())()
-	} else {
-		fmt.Println("There is NOT a pod requiring policy!")
+		fmt.Println("There the magic happends!")
+		fmt.Println(f)
+
+		if f != nil {
+			fmt.Println("There is a pod requiring policy!")
+			f.(func())()
+		} else {
+			fmt.Println("There is NOT a pod requiring policy!")
+		}
+		fmt.Println("There the magic ends!")
+
+		return nil
 	}
-	// f.(func())()
-	fmt.Println("There the magic ends!")
 
 	// The pod is during the admission phase. We need to save the pod to avoid it
 	// being cleaned before the admission ended
@@ -410,7 +413,6 @@ func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
 	m.Lock()
 	defer m.Unlock()
 
-	// m.map[pluginNameFromAnnotation].Allocate()
 	// Call down into the policy to assign this container CPUs if required.
 	err := m.policy.Allocate(m.state, p, c)
 	if err != nil {
@@ -443,8 +445,8 @@ func (m *manager) RemoveContainer(containerID string) error {
 	return nil
 }
 
-// creeam map<containerID, pluginName> la Allocate, aceasta tine cont pentru fiecare
-// container ce plugin a cerut podul lui
+// What we propossed: creating a map<containerID, pluginName> at Allocate
+// for every container we know what plugin is requested
 func (m *manager) policyRemoveContainerByID(containerID string) error {
 	podUID, containerName, err := m.containerMap.GetContainerRef(containerID)
 	if err != nil {
