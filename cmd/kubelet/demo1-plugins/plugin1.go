@@ -91,15 +91,15 @@ func NewPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs
 }
 
 // func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
-func Allocate() {
+func (staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) {
 	fmt.Println("[from plugin1]: Allocate")
 	// return nil
 }
 
 // func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
-func RemoveContainer(s state.State, podUID string, containerName string) error {
+func (staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) {
 	fmt.Println("[from plugin1]: RemoveContainer")
-	return nil
+	// return nil
 }
 
 // func (p *staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint {
@@ -117,3 +117,5 @@ func GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanage
 // func (p *staticPolicy) GetAllocatableCPUs(s state.State) cpuset.CPUSet {
 // 	return nil
 // }
+
+var MyPolicy staticPolicy

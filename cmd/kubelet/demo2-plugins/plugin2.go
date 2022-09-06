@@ -12,13 +12,13 @@ import (
 )
 
 func init() {
-	log.Println("plugin1 init")
+	log.Println("plugin2 init")
 }
 
 var V cpuset.CPUSet
 
 func F_modif_V() cpuset.CPUSet {
-	fmt.Println("plugin1: cpuSet variable V= ", V)
+	fmt.Println("plugin2: cpuSet variable V= ", V)
 
 	return cpuset.NewCPUSet(10).Union(V)
 }
@@ -26,7 +26,7 @@ func F_modif_V() cpuset.CPUSet {
 type foo struct{}
 
 func (foo) M1() {
-	fmt.Println("plugin1: invoke foo.M1")
+	fmt.Println("plugin2: invoke foo.M1")
 }
 
 func M() {
@@ -110,7 +110,7 @@ func GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[s
 
 // func (p *staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
 func GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
-	fmt.Println("[from plugin1]: GetPodTopologyHints")
+	fmt.Println("[from plugin2]: GetPodTopologyHints")
 	return nil
 }
 

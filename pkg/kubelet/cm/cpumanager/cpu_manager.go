@@ -204,6 +204,13 @@ type plugin_infos struct {
 	RemoveContainer_symb     plugin.Symbol
 	GetTopologyHints_symb    plugin.Symbol
 	GetPodTopologyHints_symb plugin.Symbol
+	MyPolicyInterface_symb   plugin.Symbol
+}
+
+type MyInterface interface {
+	// Allocate call is idempotent
+	Allocate(s state.State, pod *v1.Pod, container *v1.Container)
+	RemoveContainer(s state.State, podUID string, containerName string)
 }
 
 func managePlugins() (map[string]plugin_infos, error) {
@@ -230,15 +237,16 @@ func managePlugins() (map[string]plugin_infos, error) {
 				return pluginsMap, err
 			}
 
-			Allocate_symb, err := pluginPointer.Lookup("Allocate")
-			if err != nil {
-				return pluginsMap, err
-			}
+			// Allocate_symb, err := pluginPointer.Lookup("Allocate")
+			// if err != nil {
+			// 	return pluginsMap, err
+			// }
+			// Allocate_symb := nil
 
-			RemoveContainer_symb, err := pluginPointer.Lookup("RemoveContainer")
-			if err != nil {
-				return pluginsMap, err
-			}
+			// RemoveContainer_symb, err := pluginPointer.Lookup("RemoveContainer")
+			// if err != nil {
+			// 	return pluginsMap, err
+			// }
 
 			GetTopologyHints_symb, err := pluginPointer.Lookup("GetTopologyHints")
 			if err != nil {
@@ -246,6 +254,11 @@ func managePlugins() (map[string]plugin_infos, error) {
 			}
 
 			GetPodTopologyHints_symb, err := pluginPointer.Lookup("GetPodTopologyHints")
+			if err != nil {
+				return pluginsMap, err
+			}
+
+			MyPolicyInterface_symb, err := pluginPointer.Lookup("MyPolicy")
 			if err != nil {
 				return pluginsMap, err
 			}
@@ -261,18 +274,39 @@ func managePlugins() (map[string]plugin_infos, error) {
 			funcs := plugin_infos{
 				pluginPointer: pluginPointer,
 				// GetAllocatableCPUs_symb:  GetAllocatableCPUs_symb,
-				NewPolicy_symb:           NewPolicy_symb,
-				Allocate_symb:            Allocate_symb,
-				RemoveContainer_symb:     RemoveContainer_symb,
+				NewPolicy_symb: NewPolicy_symb,
+				// Allocate_symb:            Allocate_symb,
+				// RemoveContainer_symb:     RemoveContainer_symb,
 				GetTopologyHints_symb:    GetTopologyHints_symb,
 				GetPodTopologyHints_symb: GetPodTopologyHints_symb,
+				MyPolicyInterface_symb:   MyPolicyInterface_symb,
 			}
 
 			pluginsMap[pluginName] = funcs
 		}
+
+		break
 	}
 
 	fmt.Println("the final plugin map is: ", pluginsMap)
+
+	f := pluginsMap["policy1"].Allocate_symb
+
+	if f != nil {
+		fmt.Println("There is a pod requiring policy!")
+		f.(func())()
+	} else {
+		fmt.Println("There is NOT a pod requiring policy!")
+	}
+
+	pluginPointer, _ := plugin.Open("/etc/kubernetes/cci/plugin1.so")
+
+	f1, _ := pluginPointer.Lookup("MyPolicy")
+	i, _ := f1.(MyInterface)
+	var st state.State
+	i.Allocate(st, &v1.Pod{}, &v1.Container{})
+
+	i.RemoveContainer(st, "pod-uix-example", "container1")
 
 	return pluginsMap, nil
 
@@ -289,6 +323,8 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 	var err error
 
 	pluginMap, err := managePlugins()
+
+	fmt.Println("managed plugins: ", pluginMap)
 
 	if err != nil {
 		fmt.Println("something went wrong in plugin, err: ", err)
@@ -384,20 +420,29 @@ func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesRe
 
 func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
 	fmt.Println("pod name is: ", p.ObjectMeta.Name)
-	fmt.Println("annotation is: ", p.ObjectMeta.Annotations["policy"])
+	fmt.Println("annotation is: ", p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"])
 
 	if p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"] == "policy1" {
-		f := m.pluginMap[p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"]].Allocate_symb
-
 		fmt.Println("There the magic happends!")
-		fmt.Println(f)
 
-		if f != nil {
-			fmt.Println("There is a pod requiring policy!")
-			f.(func())()
-		} else {
-			fmt.Println("There is NOT a pod requiring policy!")
-		}
+		// i, ok := m.pluginMap[p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"]].MyPolicyInterface_symb.(MyInterface)
+		// if !ok {
+		// 	return errors.New("f1 does not implement MyInterface")
+		// }
+
+		// fmt.Println(i)
+		// i.Allocate()
+
+		// f := m.pluginMap[p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"]].Allocate_symb
+
+		// fmt.Println(f)
+
+		// if f != nil {
+		// 	fmt.Println("There is a pod requiring policy!")
+		// 	f.(func())()
+		// } else {
+		// 	fmt.Println("There is NOT a pod requiring policy!")
+		// }
 		fmt.Println("There the magic ends!")
 
 		return nil
