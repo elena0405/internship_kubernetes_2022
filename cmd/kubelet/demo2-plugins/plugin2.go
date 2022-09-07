@@ -12,13 +12,13 @@ import (
 )
 
 func init() {
-	log.Println("plugin1 init")
+	log.Println("plugin2 init")
 }
 
 var V cpuset.CPUSet
 
 func F_modif_V() cpuset.CPUSet {
-	fmt.Println("plugin1: cpuSet variable V= ", V)
+	fmt.Println("plugin2: cpuSet variable V= ", V)
 
 	return cpuset.NewCPUSet(9).Union(V)
 }
@@ -26,7 +26,7 @@ func F_modif_V() cpuset.CPUSet {
 type foo struct{}
 
 func (foo) M1() {
-	fmt.Println("plugin1: invoke foo.M1")
+	fmt.Println("plugin2: invoke foo.M1")
 }
 
 func M() {
@@ -35,7 +35,7 @@ func M() {
 
 func GetPluginName() string {
 
-	return "policy1"
+	return "policy2"
 }
 
 var Foo foo
@@ -76,12 +76,12 @@ type staticPolicy struct {
 
 // func (p *staticPolicy) GetAllocatableCPUs(s state.State) cpuset.CPUSet {
 func (staticPolicy) GetAllocatableCPUs(s state.State) {
-	fmt.Println("[from plugin1]: GetAllocatableCPUs")
+	fmt.Println("[from plugin2]: GetAllocatableCPUs")
 	// return s.GetDefaultCPUSet().Difference(p.reserved)
 }
 
 func NewPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs cpuset.CPUSet, affinity topologymanager.Store, cpuPolicyOptions map[string]string) (Policy, error) {
-	fmt.Println("[from plugin1]: NewStaticPolicy")
+	fmt.Println("[from plugin2]: NewStaticPolicy")
 	// policy := &staticPolicy{
 	// 	topology:    topology,
 	// 	affinity:    affinity,
@@ -93,25 +93,25 @@ func NewPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs
 
 // func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
 func (staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) {
-	fmt.Println("[from plugin1]: Allocate")
+	fmt.Println("[from plugin2]: Allocate")
 	// return nil
 }
 
 // func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
 func (staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) {
-	fmt.Println("[from plugin1]: RemoveContainer")
+	fmt.Println("[from plugin2]: RemoveContainer")
 	// return nil
 }
 
 // func (p *staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint {
 func (staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) {
-	fmt.Println("[from plugin1]: GetTopologyHints")
+	fmt.Println("[from plugin2]: GetTopologyHints")
 	// return nil
 }
 
 // func (p *staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
 func (staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) {
-	fmt.Println("[from plugin1]: GetPodTopologyHints")
+	fmt.Println("[from plugin2]: GetPodTopologyHints")
 	// return nil
 }
 

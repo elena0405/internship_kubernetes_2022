@@ -18,7 +18,10 @@ package cpumanager
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
 	"math"
+	"plugin"
 	"sync"
 	"time"
 
@@ -140,6 +143,8 @@ type manager struct {
 
 	// pendingAdmissionPod contain the pod during the admission phase
 	pendingAdmissionPod *v1.Pod
+
+	pluginMap map[string]plugin_cb
 }
 
 var _ Manager = &manager{}
@@ -149,11 +154,148 @@ type sourcesReadyStub struct{}
 func (s *sourcesReadyStub) AddSource(source string) {}
 func (s *sourcesReadyStub) AllReady() bool          { return true }
 
+func loadPlugin(pluginname string) (string, *plugin.Plugin) {
+	fmt.Println("We are in NewManager!")
+	pluginPath := "/etc/kubernetes/cci/" + pluginname
+
+	p, err := plugin.Open(pluginPath)
+	fmt.Println("path:", pluginPath)
+	if err != nil {
+		fmt.Println("err1: ", err.Error())
+	}
+
+	fM, err := p.Lookup("M")
+	if err != nil {
+		fmt.Println("err2:", err.Error())
+	}
+	fM.(func())()
+
+	fV, err := p.Lookup("F_modif_V")
+	if err != nil {
+		fmt.Println("err3:", err.Error())
+	}
+
+	v, err := p.Lookup("V")
+	if err != nil {
+		fmt.Println("err3:", err.Error())
+	}
+
+	*v.(*cpuset.CPUSet) = cpuset.NewCPUSetInt64(1, 2, 3)
+	var mycpuSet cpuset.CPUSet = fV.(func() cpuset.CPUSet)()
+	fmt.Println(mycpuSet.String())
+
+	fV2, err := p.Lookup("GetPluginName")
+	if err != nil {
+		fmt.Println("err4:", err.Error())
+	}
+
+	var mystring string = fV2.(func() string)()
+	fmt.Println("plugin name is: ", mystring)
+
+	return mystring, p
+}
+
+// TODO: ADD MORE FUNCTIONS
+type plugin_cb struct {
+	pluginPointer *plugin.Plugin
+
+	NewPolicy_symb         plugin.Symbol
+	MyPolicyInterface_symb plugin.Symbol
+}
+
+type MyInterface interface {
+	// Allocate call is idempotent
+	GetAllocatableCPUs(s state.State)
+	Allocate(s state.State, pod *v1.Pod, container *v1.Container)
+	RemoveContainer(s state.State, podUID string, containerName string)
+	GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container)
+	GetPodTopologyHints(s state.State, pod *v1.Pod)
+}
+
+func managePlugins() (map[string]plugin_cb, error) {
+	pluginsMap := make(map[string]plugin_cb)
+
+	files, err := ioutil.ReadDir("/etc/kubernetes/cci")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, file := range files {
+		fmt.Println(file.Name(), file.IsDir())
+
+		if !file.IsDir() {
+			fmt.Println("file name:", file.Name())
+			pluginName, pluginPointer := loadPlugin(file.Name())
+
+			NewPolicy_symb, err := pluginPointer.Lookup("NewPolicy")
+			if err != nil {
+				return pluginsMap, err
+			}
+
+			MyPolicyInterface_symb, err := pluginPointer.Lookup("MyPolicy")
+			if err != nil {
+				return pluginsMap, err
+			}
+
+			// TODO: work on that logic, we want bouth plugin1 and plugin3 in our map
+			// plugin1 good
+			// plugin2 bad -> return
+			// plugin3 bun
+			// -> map {plugin1}
+
+			// we want: map {plugin1, plugin3}
+
+			funcs := plugin_cb{
+				pluginPointer:          pluginPointer,
+				NewPolicy_symb:         NewPolicy_symb,
+				MyPolicyInterface_symb: MyPolicyInterface_symb,
+			}
+
+			pluginsMap[pluginName] = funcs
+		}
+	}
+
+	fmt.Println("the final plugin map is: ", pluginsMap)
+
+	return pluginsMap, nil
+
+}
+
+// scopul nostru: sa creeam in zona aceasta niste "hook-uri" astfel incat pt fiecare fisier de tip plugin (.so)
+// sa il descoperim si sa il incarcam si sa salvam pointerii spre pluginuri si functiile acestora intr-un map.
+//
+
 // NewManager creates new cpu manager based on provided policy
 func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
 	var topo *topology.CPUTopology
 	var policy Policy
 	var err error
+
+	pluginMap, err := managePlugins()
+
+	fmt.Println("managed plugins: ", pluginMap)
+
+	// POC:
+
+	policys := [...]string{"policy1", "policy2"}
+
+	for _, policyName := range policys {
+		var st state.State
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).Allocate(st, &v1.Pod{}, &v1.Container{})
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).RemoveContainer(st, "pod-uix-example", "container1")
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetAllocatableCPUs(st)
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetPodTopologyHints(st, &v1.Pod{})
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetTopologyHints(st, &v1.Pod{}, &v1.Container{})
+	}
+
+	if err != nil {
+		fmt.Println("something went wrong in plugin, err: ", err)
+	}
 
 	switch policyName(cpuPolicyName) {
 
@@ -204,6 +346,7 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		topology:                   topo,
 		nodeAllocatableReservation: nodeAllocatableReservation,
 		stateFileDirectory:         stateFileDirectory,
+		pluginMap:                  pluginMap,
 	}
 	manager.sourcesReady = &sourcesReadyStub{}
 	return manager, nil
@@ -243,6 +386,35 @@ func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesRe
 }
 
 func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
+	fmt.Println("pod name is: ", p.ObjectMeta.Name)
+	fmt.Println("annotation is: ", p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"])
+
+	if p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"] == "policy1" {
+		fmt.Println("There the magic happends!")
+
+		// i, ok := m.pluginMap[p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"]].MyPolicyInterface_symb.(MyInterface)
+		// if !ok {
+		// 	return errors.New("f1 does not implement MyInterface")
+		// }
+
+		// fmt.Println(i)
+		// i.Allocate()
+
+		// f := m.pluginMap[p.ObjectMeta.Annotations["container.cpupolicy.alpha.kubernetes.io"]].Allocate_symb
+
+		// fmt.Println(f)
+
+		// if f != nil {
+		// 	fmt.Println("There is a pod requiring policy!")
+		// 	f.(func())()
+		// } else {
+		// 	fmt.Println("There is NOT a pod requiring policy!")
+		// }
+		fmt.Println("There the magic ends!")
+
+		return nil
+	}
+
 	// The pod is during the admission phase. We need to save the pod to avoid it
 	// being cleaned before the admission ended
 	m.setPodPendingAdmission(p)
@@ -285,6 +457,8 @@ func (m *manager) RemoveContainer(containerID string) error {
 	return nil
 }
 
+// What we propossed: creating a map<containerID, pluginName> at Allocate
+// for every container we know what plugin is requested
 func (m *manager) policyRemoveContainerByID(containerID string) error {
 	podUID, containerName, err := m.containerMap.GetContainerRef(containerID)
 	if err != nil {
