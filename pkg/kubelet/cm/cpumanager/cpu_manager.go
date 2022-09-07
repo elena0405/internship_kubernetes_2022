@@ -144,7 +144,7 @@ type manager struct {
 	// pendingAdmissionPod contain the pod during the admission phase
 	pendingAdmissionPod *v1.Pod
 
-	pluginMap map[string]plugin_infos
+	pluginMap map[string]plugin_cb
 }
 
 var _ Manager = &manager{}
@@ -159,6 +159,7 @@ func loadPlugin(pluginname string) (string, *plugin.Plugin) {
 	pluginPath := "/etc/kubernetes/cci/" + pluginname
 
 	p, err := plugin.Open(pluginPath)
+	fmt.Println("path:", pluginPath)
 	if err != nil {
 		fmt.Println("err1: ", err.Error())
 	}
@@ -195,26 +196,24 @@ func loadPlugin(pluginname string) (string, *plugin.Plugin) {
 }
 
 // TODO: ADD MORE FUNCTIONS
-type plugin_infos struct {
+type plugin_cb struct {
 	pluginPointer *plugin.Plugin
 
-	GetAllocatableCPUs_symb  plugin.Symbol
-	NewPolicy_symb           plugin.Symbol
-	Allocate_symb            plugin.Symbol
-	RemoveContainer_symb     plugin.Symbol
-	GetTopologyHints_symb    plugin.Symbol
-	GetPodTopologyHints_symb plugin.Symbol
-	MyPolicyInterface_symb   plugin.Symbol
+	NewPolicy_symb         plugin.Symbol
+	MyPolicyInterface_symb plugin.Symbol
 }
 
 type MyInterface interface {
 	// Allocate call is idempotent
+	GetAllocatableCPUs(s state.State)
 	Allocate(s state.State, pod *v1.Pod, container *v1.Container)
 	RemoveContainer(s state.State, podUID string, containerName string)
+	GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container)
+	GetPodTopologyHints(s state.State, pod *v1.Pod)
 }
 
-func managePlugins() (map[string]plugin_infos, error) {
-	pluginsMap := make(map[string]plugin_infos)
+func managePlugins() (map[string]plugin_cb, error) {
+	pluginsMap := make(map[string]plugin_cb)
 
 	files, err := ioutil.ReadDir("/etc/kubernetes/cci")
 	if err != nil {
@@ -225,35 +224,10 @@ func managePlugins() (map[string]plugin_infos, error) {
 		fmt.Println(file.Name(), file.IsDir())
 
 		if !file.IsDir() {
+			fmt.Println("file name:", file.Name())
 			pluginName, pluginPointer := loadPlugin(file.Name())
 
-			// GetAllocatableCPUs_symb, err := pluginPointer.Lookup("GetAllocatableCPUs")
-			// if err != nil {
-			// 	return pluginsMap, err
-			// }
-
 			NewPolicy_symb, err := pluginPointer.Lookup("NewPolicy")
-			if err != nil {
-				return pluginsMap, err
-			}
-
-			// Allocate_symb, err := pluginPointer.Lookup("Allocate")
-			// if err != nil {
-			// 	return pluginsMap, err
-			// }
-			// Allocate_symb := nil
-
-			// RemoveContainer_symb, err := pluginPointer.Lookup("RemoveContainer")
-			// if err != nil {
-			// 	return pluginsMap, err
-			// }
-
-			GetTopologyHints_symb, err := pluginPointer.Lookup("GetTopologyHints")
-			if err != nil {
-				return pluginsMap, err
-			}
-
-			GetPodTopologyHints_symb, err := pluginPointer.Lookup("GetPodTopologyHints")
 			if err != nil {
 				return pluginsMap, err
 			}
@@ -271,42 +245,17 @@ func managePlugins() (map[string]plugin_infos, error) {
 
 			// we want: map {plugin1, plugin3}
 
-			funcs := plugin_infos{
-				pluginPointer: pluginPointer,
-				// GetAllocatableCPUs_symb:  GetAllocatableCPUs_symb,
-				NewPolicy_symb: NewPolicy_symb,
-				// Allocate_symb:            Allocate_symb,
-				// RemoveContainer_symb:     RemoveContainer_symb,
-				GetTopologyHints_symb:    GetTopologyHints_symb,
-				GetPodTopologyHints_symb: GetPodTopologyHints_symb,
-				MyPolicyInterface_symb:   MyPolicyInterface_symb,
+			funcs := plugin_cb{
+				pluginPointer:          pluginPointer,
+				NewPolicy_symb:         NewPolicy_symb,
+				MyPolicyInterface_symb: MyPolicyInterface_symb,
 			}
 
 			pluginsMap[pluginName] = funcs
 		}
-
-		break
 	}
 
 	fmt.Println("the final plugin map is: ", pluginsMap)
-
-	f := pluginsMap["policy1"].Allocate_symb
-
-	if f != nil {
-		fmt.Println("There is a pod requiring policy!")
-		f.(func())()
-	} else {
-		fmt.Println("There is NOT a pod requiring policy!")
-	}
-
-	pluginPointer, _ := plugin.Open("/etc/kubernetes/cci/plugin1.so")
-
-	f1, _ := pluginPointer.Lookup("MyPolicy")
-	i, _ := f1.(MyInterface)
-	var st state.State
-	i.Allocate(st, &v1.Pod{}, &v1.Container{})
-
-	i.RemoveContainer(st, "pod-uix-example", "container1")
 
 	return pluginsMap, nil
 
@@ -325,6 +274,24 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 	pluginMap, err := managePlugins()
 
 	fmt.Println("managed plugins: ", pluginMap)
+
+	// POC:
+
+	policys := [...]string{"policy1", "policy2"}
+
+	for _, policyName := range policys {
+		var st state.State
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).Allocate(st, &v1.Pod{}, &v1.Container{})
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).RemoveContainer(st, "pod-uix-example", "container1")
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetAllocatableCPUs(st)
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetPodTopologyHints(st, &v1.Pod{})
+
+		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetTopologyHints(st, &v1.Pod{}, &v1.Container{})
+	}
 
 	if err != nil {
 		fmt.Println("something went wrong in plugin, err: ", err)
