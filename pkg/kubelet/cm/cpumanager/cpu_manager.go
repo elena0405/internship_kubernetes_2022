@@ -205,11 +205,11 @@ type plugin_cb struct {
 
 type MyInterface interface {
 	// Allocate call is idempotent
-	GetAllocatableCPUs(s state.State)
-	Allocate(s state.State, pod *v1.Pod, container *v1.Container)
-	RemoveContainer(s state.State, podUID string, containerName string)
-	GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container)
-	GetPodTopologyHints(s state.State, pod *v1.Pod)
+	GetAllocatableCPUs(s state.State) cpuset.CPUSet
+	Allocate(s state.State, pod *v1.Pod, container *v1.Container) error
+	RemoveContainer(s state.State, podUID string, containerName string) error
+	GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint
+	GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint
 }
 
 func managePlugins() (map[string]plugin_cb, error) {
@@ -261,26 +261,16 @@ func managePlugins() (map[string]plugin_cb, error) {
 
 }
 
-// scopul nostru: sa creeam in zona aceasta niste "hook-uri" astfel incat pt fiecare fisier de tip plugin (.so)
-// sa il descoperim si sa il incarcam si sa salvam pointerii spre pluginuri si functiile acestora intr-un map.
-//
-
-// NewManager creates new cpu manager based on provided policy
-func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
-	var topo *topology.CPUTopology
-	var policy Policy
-	var err error
-
-	pluginMap, err := managePlugins()
-
-	fmt.Println("managed plugins: ", pluginMap)
-
+// our goal: make some hooks, we save pointers to plugin functions, and plugin vars
+func DoPOC(pluginMap map[string]plugin_cb) {
 	// POC:
+
+	var err error
+	var st state.State
 
 	policys := [...]string{"policy1", "policy2"}
 
 	for _, policyName := range policys {
-		var st state.State
 
 		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).Allocate(st, &v1.Pod{}, &v1.Container{})
 
@@ -293,9 +283,61 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		pluginMap[policyName].MyPolicyInterface_symb.(MyInterface).GetTopologyHints(st, &v1.Pod{}, &v1.Container{})
 	}
 
+	// bind to the ERR var
+	v, _ := pluginMap["policy1"].pluginPointer.Lookup("ERR")
+	// if err != nil {
+	// 	return err
+	// }
+
+	*v.(*error) = nil
+	*v.(*error) = pluginMap["policy1"].MyPolicyInterface_symb.(MyInterface).Allocate(st, &v1.Pod{}, &v1.Container{})
+
+	fmt.Println("we got the return value of Allocate():", *v.(*error))
+
+	v2, _ := pluginMap["policy1"].pluginPointer.Lookup("CPUSET")
+	// if err != nil {
+	// 	return err
+	// }
+
+	*v2.(*cpuset.CPUSet) = cpuset.NewCPUSet(0)
+	*v2.(*cpuset.CPUSet) = pluginMap["policy1"].MyPolicyInterface_symb.(MyInterface).GetAllocatableCPUs(st)
+
 	if err != nil {
 		fmt.Println("something went wrong in plugin, err: ", err)
 	}
+
+	fmt.Println("we got the return value of GetAllocatableCPUs:", *v2.(*cpuset.CPUSet))
+
+	*v.(*error) = pluginMap["policy1"].MyPolicyInterface_symb.(MyInterface).RemoveContainer(st, "strpod", "str")
+	fmt.Println("we got the return value of RemoveContainer:", *v.(*error))
+
+	// var v3 plugin.Symbol
+	v3, _ := pluginMap["policy1"].pluginPointer.Lookup("TOPOLOGYMAP")
+	*v3.(*map[string][]topologymanager.TopologyHint) = map[string][]topologymanager.TopologyHint{}
+	*v3.(*map[string][]topologymanager.TopologyHint) = pluginMap["policy1"].MyPolicyInterface_symb.(MyInterface).GetTopologyHints(st, &v1.Pod{}, &v1.Container{})
+
+	if err != nil {
+		fmt.Println("something went wrong in plugin, err: ", err)
+	}
+
+	fmt.Println("we got the return value of GetTopologyHints7:", *v3.(*map[string][]topologymanager.TopologyHint))
+
+	// we can reuse the v3 var because we already "lookedup" for it in the plugin
+	*v3.(*map[string][]topologymanager.TopologyHint) = pluginMap["policy1"].MyPolicyInterface_symb.(MyInterface).GetPodTopologyHints(st, &v1.Pod{})
+	fmt.Println("we got the return value of GetPodTopologyHints7:", *v3.(*map[string][]topologymanager.TopologyHint))
+
+}
+
+// NewManager creates new cpu manager based on provided policy
+func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
+	var topo *topology.CPUTopology
+	var policy Policy
+	var err error
+
+	pluginMap, _ := managePlugins()
+	fmt.Println("managed plugins: ", pluginMap)
+
+	DoPOC(pluginMap)
 
 	switch policyName(cpuPolicyName) {
 

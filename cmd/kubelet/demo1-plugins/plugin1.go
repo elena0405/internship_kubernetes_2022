@@ -17,6 +17,10 @@ func init() {
 
 var V cpuset.CPUSet
 
+var ERR error
+var CPUSET cpuset.CPUSet
+var TOPOLOGYMAP map[string][]topologymanager.TopologyHint
+
 func F_modif_V() cpuset.CPUSet {
 	fmt.Println("plugin1: cpuSet variable V= ", V)
 
@@ -74,10 +78,11 @@ type staticPolicy struct {
 
 // var _ Policy = &staticPolicy{}
 
-// func (p *staticPolicy) GetAllocatableCPUs(s state.State) cpuset.CPUSet {
-func (staticPolicy) GetAllocatableCPUs(s state.State) {
-	fmt.Println("[from plugin1]: GetAllocatableCPUs")
+func (staticPolicy) GetAllocatableCPUs(s state.State) cpuset.CPUSet {
+	// func (staticPolicy) GetAllocatableCPUs(s state.State) {
+	fmt.Println("*[from plugin1]: GetAllocatableCPUs")
 	// return s.GetDefaultCPUSet().Difference(p.reserved)
+	return cpuset.NewCPUSet(1)
 }
 
 func NewPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs cpuset.CPUSet, affinity topologymanager.Store, cpuPolicyOptions map[string]string) (Policy, error) {
@@ -92,27 +97,27 @@ func NewPolicy(topology *topology.CPUTopology, numReservedCPUs int, reservedCPUs
 }
 
 // func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
-func (staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) {
+func (staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
 	fmt.Println("[from plugin1]: Allocate")
-	// return nil
+	return nil
 }
 
 // func (p *staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
-func (staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) {
+func (staticPolicy) RemoveContainer(s state.State, podUID string, containerName string) error {
 	fmt.Println("[from plugin1]: RemoveContainer")
-	// return nil
+	return nil
 }
 
 // func (p *staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint {
-func (staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) {
+func (staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v1.Container) map[string][]topologymanager.TopologyHint {
 	fmt.Println("[from plugin1]: GetTopologyHints")
-	// return nil
+	return map[string][]topologymanager.TopologyHint{}
 }
 
 // func (p *staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
-func (staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) {
+func (staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
 	fmt.Println("[from plugin1]: GetPodTopologyHints")
-	// return nil
+	return map[string][]topologymanager.TopologyHint{}
 }
 
 // func (p *staticPolicy) GetAllocatableCPUs(s state.State) cpuset.CPUSet {
